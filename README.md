@@ -1,5 +1,11 @@
 # f64OS
 A 64-bit, bootable, preemptively multitasking kernel that loads and runs my 64-bit Forth implementation on a VGA console.
+<center>
+<kbd>
+<img src="https://github.com/tliston/f64OS/blob/main/images/f64OS.png" border=3 bordercolor="white">
+<br>Computing up to the 90th Fibonacci number.
+</kbd>
+</center>
 
 ## Overview
 * Runs under QEMU.
