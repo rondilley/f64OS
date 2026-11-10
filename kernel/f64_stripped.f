@@ -626,22 +626,6 @@ REPEAT
 DROP
 CR
 ;
-: prime?
-3
-begin
-2dup dup * >=
-while
-2dup mod 0= if 2drop 0 exit then
-2 +
-repeat
-2drop -1
-;
-: primes
-2 . cr
-1+ 3 do
-i prime? if i . cr then
-2 +loop
-;
 : Z" IMMEDIATE
 STATE @ IF
 ' LITSTRING ,

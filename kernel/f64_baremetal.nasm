@@ -437,22 +437,6 @@ defconst "F_IMMED",   __F_IMMED,   F_IMMED
 defconst "F_HIDDEN",  __F_HIDDEN,  F_HIDDEN
 defconst "F_LENMASK", __F_LENMASK, F_LENMASK
 
-; specialized constants used for opening files in specific modes
-
-%macro defo 2
-        %defstr name O_%1
-        defconst name, __O_%1, %2
-%endmacro
-
-defo RDONLY,      0o
-defo WRONLY,      1o
-defo RDWR,        2o
-defo CREAT,     100o
-defo EXCL,      200o
-defo TRUNC,    1000o
-defo APPEND,   2000o
-defo NONBLOCK, 4000o
-
 ; Words for manipulating the RETURN stack
 
 defcode ">R", TOR
@@ -1675,7 +1659,6 @@ defcode "AT-XY", AT_XY
 ; ----------------------------------------------
 ; NOTE: ALWAYS ADD CODE HERE!!!
 ;-----------------------------------------------
-
 
 defconst "GET-BRK", GET_BRK, F64_DATA_END
 
