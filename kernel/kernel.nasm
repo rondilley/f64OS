@@ -12,6 +12,17 @@ DATA_SEG equ 0x0010
 
 
 ;---Initialized data------------------------------------------------------------
+; Kernel service table. Native programs (see CALL-NATIVE in f64_baremetal.nasm)
+; get its address from the Forth word KSERVICES. Add new fields at the end only.
+align 8, db 0
+Kernel_services:
+    dq 1                      ; +0  table version
+    dq systimer_ticks         ; +8  qword: PIT ticks since boot
+    dq scan_ring              ; +16 256-byte ring of raw scancodes
+    dq scan_ring_write_pos    ; +24 byte: next write slot in scan_ring
+    dq ring_buffer_write_pos  ; +32 byte: next write slot in the ASCII ring
+    dq ring_buffer_read_pos   ; +40 byte: next read slot in the ASCII ring
+
 topline_message dw 80
 db 'Stack Depth:                 f64 Bare-Metal OS v1.0    Ticks:                   '
 
@@ -32,6 +43,19 @@ Kernel:
     mov fs, ax
     mov gs, ax
     mov ss, ax
+
+    ; Enable SSE so that native code (compiled C) can use the XMM registers.
+    ; CR0: clear EM (bit 2), set MP (bit 1). CR4: set OSFXSR (bit 9) and
+    ; OSXMMEXCPT (bit 10). The task switcher does not save the XMM registers,
+    ; so only one task (the Forth task) may use them.
+    mov rax, cr0
+    and rax, ~(1 << 2)
+    or rax, (1 << 1)
+    mov cr0, rax
+    mov rax, cr4
+    or rax, (1 << 9) | (1 << 10)
+    mov cr4, rax
+    fninit
 
     call PMA_init
     mov qword [abs stack_allocation], 0x7C00

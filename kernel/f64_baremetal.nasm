@@ -1672,6 +1672,42 @@ defcode "AT-XY", AT_XY
         call vga_update_cursor
         NEXT
 
+; ( -- addr ) Address of the kernel service table (Kernel_services in kernel.nasm)
+defconst "KSERVICES", KSERVICES, Kernel_services
+
+; ( arg entry stack-top -- result )
+; Call native 64-bit code at 'entry' on a new stack that starts at 'stack-top'.
+; 'arg' goes in rcx (Microsoft x64 ABI) and in rdi (System V ABI), so a C
+; function compiled for either ABI gets it as its first argument. The return
+; value (rax) goes on the data stack. The callee must keep the direction flag
+; clear. The Forth registers are saved here, not on the native stack.
+defcode "CALL-NATIVE", CALL_NATIVE
+        pop rax             ; stack-top
+        pop rbx             ; entry
+        pop rcx             ; arg
+        mov [native_saved_rsp], rsp
+        mov [native_saved_rsi], rsi
+        mov [native_saved_rbp], rbp
+        mov [native_saved_r15], r15
+        and rax, -16        ; 16-byte align the new stack
+        mov rsp, rax
+        mov rdi, rcx
+        sub rsp, 32         ; shadow space for the Microsoft x64 ABI
+        call rbx
+        cld
+        mov rsp, [native_saved_rsp]
+        mov rsi, [native_saved_rsi]
+        mov rbp, [native_saved_rbp]
+        mov r15, [native_saved_r15]
+        push rax
+        NEXT
+
+align 8, db 0
+native_saved_rsp dq 0
+native_saved_rsi dq 0
+native_saved_rbp dq 0
+native_saved_r15 dq 0
+
 ; ----------------------------------------------
 ; NOTE: ALWAYS ADD CODE HERE!!!
 ;-----------------------------------------------
