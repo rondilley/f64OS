@@ -319,9 +319,16 @@ ISR_keyboard:
     push rax
     push rbx
     push rcx
-    xor rax, rax         
+    xor rax, rax
+    ; bit 5 of the 8042 status is set when the byte comes from the PS/2 mouse.
+    in al, 0x64
+    mov ah, al
     ; we MUST read the byte from keyboard (or else we get no more interrupts!).
     in al, 0x60
+    ; ignore mouse bytes: they are not scancodes
+    test ah, 0x20
+    jnz ISR_keyboard.done
+    xor ah, ah
     ; store the raw scancode for native programs
     movzx rbx, byte [scan_ring_write_pos]
     mov rcx, scan_ring
