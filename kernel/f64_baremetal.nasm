@@ -1446,9 +1446,25 @@ defcode "INTERPRET", INTERPRET
         test rcx, rcx               ; Literal?
         jnz .litexec
 
+        ; EXIT from the prompt would pop a return address that is not there and
+        ; jump into data (a General Protection Fault). Refuse it.
+        mov rcx, EXIT
+        cmp rax, rcx
+        je .exiterr
+
         ; Not a literal, execute it now.  This never returns, but the codeword will
         ; eventually call NEXT which will reenter the loop in QUIT.
         jmp [rax]
+
+.exiterr:
+        push rax
+        push rdx
+        mov rax, exitmsg
+        mov rdx, exitmsglen
+        call vga_print_string
+        pop rdx
+        pop rax
+        NEXT
 
         ; Executing a literal, which means push it on the stack.
 .litexec:
@@ -1487,6 +1503,8 @@ defcode "INTERPRET", INTERPRET
 errmsg: db "PARSE ERROR: "
 errmsglen: equ $ - errmsg
 errmsgnl: db 0x0A
+exitmsg: db "EXIT works only inside a definition. Type BYE to stop f64OS.", 0x0A
+exitmsglen: equ $ - exitmsg
 
 align 8, db 0
 interpret_is_lit:
