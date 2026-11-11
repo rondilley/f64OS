@@ -17,3 +17,4 @@ A 64-bit, bootable, preemptively multitasking kernel that loads and runs my 64-b
 * Forth is implemented with a minimal set of bootstrapping words in x64 assembly. The remainder of the language is written in Forth itself.
 * You can edit any of the files and easily rebuild the os.bin filesystem.
 * You can edit the editor (edit.f) inside itself and redeploy immediately to see your changes.
+* Runs DOOM as a native 64-bit binary, loaded from the filesystem by Forth. See [doom/README.md](doom/README.md).

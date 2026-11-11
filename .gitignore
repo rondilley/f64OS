@@ -1,1 +1,7 @@
 os.bin
+
+# DOOM: build outputs and WAD files (WADs are not part of this repo)
+doom/build/
+disk_files/doom/doom.bin
+disk_files/doom/*.wad
+disk_files/doom/*.WAD
