@@ -1355,7 +1355,12 @@ void D_DoomMain (void)
 
     // Load configuration files before initialising other subsystems.
     DEH_printf("M_LoadDefaults: Load system defaults.\n");
+#ifdef F64OS
+    // f64OS file names have at most 16 characters.
+    M_SetConfigFilenames("default.cfg", "extra.cfg");
+#else
     M_SetConfigFilenames("default.cfg", PROGRAM_PREFIX "doom.cfg");
+#endif
     D_BindVariables();
     M_LoadDefaults();
 

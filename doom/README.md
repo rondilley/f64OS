@@ -52,6 +52,27 @@ turn with the mouse and move with the keys. In the QEMU window, click to
 give the mouse to the guest. Push **Ctrl+Alt+G** to release it. Use
 **Options**, **Mouse sensitivity** in the DOOM menu to change the speed.
 
+## Savegames and configuration
+
+DOOM writes savegames (`doomsav0.dsg` to `doomsav5.dsg`) and its
+configuration files (`default.cfg`, `extra.cfg`) to the f64OS file system. The files go into
+the directory that you start DOOM from, at the time DOOM saves them. Use
+`LS` to see them.
+
+The build makes `os.bin` again from `disk_files/`. Thus, before each
+build, `bootfile_extract.py` copies the `.dsg` and `.cfg` files from the
+`doom` directory of the previous `os.bin` into `disk_files/doom/`. The new
+image then has them. `run.ps1` and the top-level Makefile do this step.
+
+- The disk image is the master copy. A file in the image replaces the
+  file with the same name in `disk_files/doom/`.
+- Do not delete `os.bin` before a build. If you do, the build cannot
+  copy the saves that are not in `disk_files/doom/`.
+- The image has 16 MiB of free space for new files. A save that does not
+  fit in the sectors of the previous file gets new sectors. The build makes
+  the free space new again.
+- The `.gitignore` file excludes the `.dsg` and `.cfg` files.
+
 ## Sound
 
 DOOM plays sound effects on a Sound Blaster 16 and music on an OPL2 FM
@@ -109,6 +130,7 @@ build fails, they make `os.bin` without DOOM.
 | Platform | `f64/doomgeneric_f64.c` | VGA mode 13h, PIT at 1000 Hz, keyboard scancodes, ENDOOM |
 | Sound effects | `f64/sound_f64.c` | Sound Blaster 16 driver, mixer, IRQ 5 handler |
 | Music | `f64/music_f64.c` | MIDI player for the OPL2 with `GENMIDI` instruments |
+| Disk files | `f64/disk_f64.c` | ATA PIO and the f64OS directory format, for savegames and configuration files |
 | C library | `f64/libc.c`, `f64/include/` | Memory allocator, strings, `printf`, `sscanf`, files in RAM |
 | DOOM | `doomgeneric/` | Upstream doomgeneric source (GPL-2.0) |
 
@@ -147,8 +169,6 @@ System V ABI get it as the first argument.
 
 ## Limits
 
-- Saved games and `default.cfg` are files in RAM. DOOM does not keep them
-  after it stops.
 - DOOM output goes to COM1. Before DOOM sets the graphics mode, the output
   also goes to the text screen.
 

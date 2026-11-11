@@ -18,8 +18,8 @@ HEX
 F00000 CONSTANT DMA-BASE
 DECIMAL
 
-( Boot block for doom.bin: 10 cells. See doom/f64/include/f64.h )
-10 CELLS ALLOT CONSTANT DOOM-BOOT
+( Boot block for doom.bin: 11 cells. See doom/f64/include/f64.h )
+11 CELLS ALLOT CONSTANT DOOM-BOOT
 : BOOT! ( value index -- ) CELLS DOOM-BOOT + ! ;
 
 0 VALUE LD-LBA
@@ -93,6 +93,7 @@ DECIMAL
     HEAP-END           7 BOOT!
     DOOM-LIMIT         8 BOOT!
     DMA-BASE           9 BOOT!
+    CWD-LBA           10 BOOT!     ( savegames go in this directory )
 
     DOOM-BOOT DOOM-BASE DOOM-STACK CALL-NATIVE
     ?DUP IF

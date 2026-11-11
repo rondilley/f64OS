@@ -1608,7 +1608,7 @@ static const int scantokey[128] =
 
 static void SaveDefaultCollection(default_collection_t *collection)
 {
-#if ORIGCODE
+#if ORIGCODE || defined(F64OS)  // f64OS: config files are saved on disk
     default_t *defaults;
     int i, v;
     FILE *f;
@@ -1753,6 +1753,14 @@ static void SetVariable(default_t *def, char *value)
             {
                 intparm = scantokey[intparm];
             }
+#ifdef F64OS
+            else if (intparm < 256)
+            {
+                // f64OS: doomgeneric key codes with no scancode
+                // (KEY_FIRE, KEY_USE, KEY_STRAFE_L/R) are saved as
+                // their DOOM key code. Keep them as they are.
+            }
+#endif
             else
             {
                 intparm = 0;
@@ -1770,7 +1778,7 @@ static void SetVariable(default_t *def, char *value)
 
 static void LoadDefaultCollection(default_collection_t *collection)
 {
-#if ORIGCODE
+#if ORIGCODE || defined(F64OS)  // f64OS: config files are read from disk
     FILE *f;
     default_t *def;
     char defname[80];
@@ -2042,11 +2050,16 @@ float M_GetFloatVariable(char *name)
 
 static char *GetDefaultConfigDir(void)
 {
+#ifdef F64OS
+    // f64OS: no directory prefix. "." would give ".default.cfg".
+    return strdup("");
+#else
     char *result = (char *)malloc(2);
     result[0] = '.';
     result[1] = '\0';
 
     return result;
+#endif
 }
 
 // 

@@ -3,8 +3,10 @@
  *
  * Memory:  first-fit allocator over the heap range in the boot block.
  * Files:   the WAD is a read-only file in RAM. Files that DOOM writes
- *          (savegames, default.cfg) are RAM files. They are lost when
- *          DOOM exits.
+ *          are RAM files. Savegames (*.dsg) and config files (*.cfg)
+ *          are also written to the f64OS disk when DOOM closes or
+ *          renames them, and read from the disk when they are not in
+ *          RAM (see disk_f64.c).
  * Console: stdout and stderr go to COM1 and, until DOOM sets the
  *          graphics mode, to the VGA text screen. The last stderr text
  *          is kept for the error message that doom.f shows.
@@ -597,6 +599,7 @@ struct f64_file {
     size_t          pos;
     int             writable;
     int             eof;
+    int             dirty;     /* written since it was opened */
 };
 
 static struct ramfile ramfiles[RAMFILE_MAX];
@@ -654,6 +657,54 @@ static struct ramfile *ramfile_create(const char *path)
     return NULL;
 }
 
+int  f64_disk_usable(const char *name);
+int  f64_disk_load(const char *name, uint8_t **data, size_t *size);
+int  f64_disk_save(const char *name, const uint8_t *data, size_t size);
+
+static int ends_with(const char *s, const char *suffix)
+{
+    size_t n = strlen(s), m = strlen(suffix);
+
+    return n >= m && !strcasecmp(s + n - m, suffix);
+}
+
+/* Files that stay on the disk: savegames and config files. temp.dsg is
+ * only the first step of a save (DOOM renames it), so it stays in RAM. */
+static int is_persistent(const char *name)
+{
+    return f64_disk_usable(name)
+        && ((ends_with(name, ".dsg") && strcasecmp(name, "temp.dsg"))
+            || ends_with(name, ".cfg"));
+}
+
+static void ramfile_persist(struct ramfile *rf)
+{
+    if (rf && is_persistent(rf->name))
+        f64_disk_save(rf->name, rf->data ? rf->data : (const uint8_t *)"", rf->size);
+}
+
+/* Make a RAM file from a file on the disk. */
+static struct ramfile *ramfile_from_disk(const char *path)
+{
+    const char *b = base_name(path);
+    struct ramfile *rf;
+    uint8_t *data;
+    size_t size;
+
+    if (!is_persistent(b) || !f64_disk_load(b, &data, &size))
+        return NULL;
+    rf = ramfile_create(path);
+    if (!rf)
+    {
+        free(data);
+        return NULL;
+    }
+    rf->data = data;
+    rf->size = size;
+    rf->cap = size;
+    return rf;
+}
+
 static size_t file_size(FILE *f)
 {
     return f->rf ? f->rf->size : f64_boot->wad_size;
@@ -678,6 +729,8 @@ FILE *fopen(const char *path, const char *mode)
     }
 
     rf = ramfile_find(path);
+    if (!rf && !write)
+        rf = ramfile_from_disk(path);
     if (!rf && (write || append))
         rf = ramfile_create(path);
     if (!rf)
@@ -701,7 +754,11 @@ FILE *fopen(const char *path, const char *mode)
 int fclose(FILE *f)
 {
     if (f && f->kind == F_MEM)
+    {
+        if (f->dirty)
+            ramfile_persist(f->rf);
         free(f);
+    }
     return 0;
 }
 
@@ -755,6 +812,7 @@ size_t fwrite(const void *ptr, size_t size, size_t n, FILE *f)
         memset(rf->data + rf->size, 0, f->pos - rf->size);
     memcpy(rf->data + f->pos, ptr, total);
     f->pos += total;
+    f->dirty = 1;
     if (f->pos > rf->size)
         rf->size = f->pos;
     return n;
@@ -835,13 +893,14 @@ int rename(const char *oldpath, const char *newpath)
         return -1;
     remove(newpath);
     strncpy(rf->name, base_name(newpath), RAMFILE_NAME - 1);
+    ramfile_persist(rf);                    /* temp.dsg -> doomsavN.dsg */
     return 0;
 }
 
 int access(const char *path, int mode)
 {
     (void)mode;
-    return (is_wad_name(path) || ramfile_find(path)) ? 0 : -1;
+    return (is_wad_name(path) || ramfile_find(path) || ramfile_from_disk(path)) ? 0 : -1;
 }
 
 int mkdir(const char *path, mode_t mode)
@@ -861,7 +920,7 @@ int stat(const char *path, struct stat *st)
         st->st_mode = S_IFREG;
         return 0;
     }
-    if ((rf = ramfile_find(path)))
+    if ((rf = ramfile_find(path)) || (rf = ramfile_from_disk(path)))
     {
         st->st_size = rf->size;
         st->st_mode = S_IFREG;

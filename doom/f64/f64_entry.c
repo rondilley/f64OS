@@ -48,6 +48,7 @@ const char *f64_main(struct f64_boot *boot)
 
     f64_libc_init();
     f64_platform_start();
+    f64_disk_init();
 
     if (__builtin_setjmp(exit_buf) == 0)
     {

@@ -45,6 +45,11 @@ if (-not $NoDoom) {
     }
 }
 
+# Copy DOOM savegames and config out of the old os.bin, so that the new
+# image keeps them (see bootfile_extract.py).
+& $python -I bootfile_extract.py
+if ($LASTEXITCODE) { throw 'bootfile_extract.py failed' }
+
 # Python on Windows writes CRLF to stdout, and a PowerShell redirect
 # changes the encoding. Write the file from Python with LF endings.
 & $python -I -c "import sys,runpy,io; b=io.StringIO(); o=sys.stdout; sys.stdout=b; runpy.run_path('strip_forth_comments.py'); sys.stdout=o; open('kernel/f64_stripped.f','w',newline='\n').write(b.getvalue())"

@@ -105,5 +105,6 @@ with open(input_filename, 'r+b') as infile:
         # print(d)
         create_dir_entry(infile, d, lba)
         c += 1
-    # Pad image with 256 free sectors (128 KiB) for creating new files/dirs in Forth
-    infile.write(b'\0' * (256 * 512))
+    # Pad image with 32768 free sectors (16 MiB) for files that Forth and
+    # DOOM write (DOOM savegames are tens to hundreds of KiB each)
+    infile.write(b'\0' * (32768 * 512))

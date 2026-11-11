@@ -58,7 +58,7 @@ DOOM_SRC := dummy am_map doomdef doomstat dstrings d_event d_items d_iwad \
 OBJDIR := build
 # f64_entry must be first: the loader jumps to the first byte of doom.bin.
 OBJS := $(OBJDIR)/f64_entry.o $(OBJDIR)/doomgeneric_f64.o $(OBJDIR)/libc.o \
-        $(OBJDIR)/sound_f64.o $(OBJDIR)/music_f64.o \
+        $(OBJDIR)/sound_f64.o $(OBJDIR)/music_f64.o $(OBJDIR)/disk_f64.o \
         $(addprefix $(OBJDIR)/,$(addsuffix .o,$(DOOM_SRC)))
 
 OUT := ../disk_files/doom/doom.bin
