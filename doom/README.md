@@ -35,15 +35,22 @@ license. Do not add WAD files to git. The `.gitignore` file excludes them.
 | Key | Function |
 | --- | --- |
 | Up and down arrows, or W and S | Move forward and back |
-| Left and right arrows | Turn |
+| Left and right arrows, or mouse left and right | Turn |
 | A and D | Strafe left and right |
-| Ctrl | Fire |
+| Ctrl, or left mouse button | Fire |
+| Right mouse button | Strafe (with mouse movement) |
+| Middle mouse button | Move forward |
 | Space bar | Use (open doors, push switches) |
 | Shift | Run |
 | Alt | Strafe |
 | 1 to 7 | Select weapon |
 | Tab | Automap |
 | Esc | Menu |
+
+The mouse turns only. It does not move you forward and back. Most players
+turn with the mouse and move with the keys. In the QEMU window, click to
+give the mouse to the guest. Push **Ctrl+Alt+G** to release it. Use
+**Options**, **Mouse sensitivity** in the DOOM menu to change the speed.
 
 ## Sound
 
@@ -120,10 +127,16 @@ build fails, they make `os.bin` without DOOM.
 - `kernel.nasm` sets the SSE bits in CR0 and CR4, because the gcc code uses
   SSE instructions. The task switcher does not save XMM0 to XMM15. Thus, only
   the Forth task can use SSE.
-- `kernel.nasm` has a kernel service table. The Forth word `KSERVICES`
-  gives its address.
+- `kernel.nasm` has a kernel service table, version 2. The Forth word
+  `KSERVICES` gives its address. Version 2 adds the mouse ring.
 - `isr.nasm` writes each raw scancode into a 256-byte ring. DOOM reads key
   press and key release data from this ring.
+- `isr.nasm` has an IRQ 12 handler for the PS/2 mouse. It writes each mouse
+  byte into a second 256-byte ring. The keyboard handler also sends mouse
+  bytes to this ring, because the controller can send them with IRQ 1. The kernel does
+  not turn on the mouse. DOOM turns it on when it starts and turns it off
+  when it stops.
+- `kernel.nasm` unmasks IRQ 2 (cascade) and IRQ 12 at the PIC.
 - `isr.nasm` shows the RIP for faults on the screen and sends it to COM1.
   In graphics mode, use `-serial stdio` in QEMU to see these messages.
 - `f64_baremetal.nasm` has the new words `KSERVICES` and `CALL-NATIVE`.
@@ -134,7 +147,6 @@ System V ABI get it as the first argument.
 
 ## Limits
 
-- There is no mouse.
 - Saved games and `default.cfg` are files in RAM. DOOM does not keep them
   after it stops.
 - DOOM output goes to COM1. Before DOOM sets the graphics mode, the output

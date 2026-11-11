@@ -844,8 +844,15 @@ boolean G_Responder (event_t* ev)
 		 
       case ev_mouse: 
         SetMouseButtons(ev->data1);
+#ifdef F64OS
+	// f64OS: add up the movement. More than one mouse event can come
+	// before the next tic, and the movement of each one must count.
+	mousex += ev->data2*(mouseSensitivity+5)/10; 
+	mousey += ev->data3*(mouseSensitivity+5)/10; 
+#else
 	mousex = ev->data2*(mouseSensitivity+5)/10; 
 	mousey = ev->data3*(mouseSensitivity+5)/10; 
+#endif
 	return true;    // eat events 
  
       case ev_joystick: 

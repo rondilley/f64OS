@@ -14,12 +14,14 @@
 
 /* Kernel service table (Kernel_services in kernel.nasm). */
 struct f64_ksvc {
-    uint64_t          version;    /* 1 */
+    uint64_t          version;    /* 2 or more for the mouse fields */
     volatile uint64_t *ticks;     /* PIT ticks since boot */
     volatile uint8_t  *scan_ring; /* 256-byte ring of raw set-1 scancodes */
     volatile uint8_t  *scan_wpos; /* next write slot in scan_ring */
     volatile uint8_t  *kbd_wpos;  /* next write slot in the ASCII ring */
     volatile uint8_t  *kbd_rpos;  /* next read slot in the ASCII ring */
+    volatile uint8_t  *mouse_ring; /* version 2: 256-byte ring of PS/2 mouse bytes */
+    volatile uint8_t  *mouse_wpos; /* version 2: next write slot in mouse_ring */
 };
 
 /* Boot block, filled by doom.f. One 64-bit cell per field. */
@@ -69,5 +71,6 @@ void f64_sound_shutdown(void);  /* stop all sound output */
 /* doomgeneric_f64.c */
 void f64_platform_start(void);
 void f64_platform_stop(void);
+void f64_mouse_events(void);    /* post mouse movement and buttons to DOOM */
 
 #endif

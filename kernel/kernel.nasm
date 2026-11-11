@@ -16,12 +16,14 @@ DATA_SEG equ 0x0010
 ; get its address from the Forth word KSERVICES. Add new fields at the end only.
 align 8, db 0
 Kernel_services:
-    dq 1                      ; +0  table version
+    dq 2                      ; +0  table version (2: mouse ring)
     dq systimer_ticks         ; +8  qword: PIT ticks since boot
     dq scan_ring              ; +16 256-byte ring of raw scancodes
     dq scan_ring_write_pos    ; +24 byte: next write slot in scan_ring
     dq ring_buffer_write_pos  ; +32 byte: next write slot in the ASCII ring
     dq ring_buffer_read_pos   ; +40 byte: next read slot in the ASCII ring
+    dq mouse_ring             ; +48 256-byte ring of raw PS/2 mouse bytes
+    dq mouse_ring_write_pos   ; +56 byte: next write slot in mouse_ring
 
 topline_message dw 80
 db 'Stack Depth:                 f64 Bare-Metal OS v1.0    Ticks:                   '
@@ -31,9 +33,9 @@ db 'Stack Depth:                 f64 Bare-Metal OS v1.0    Ticks:               
 Kernel:
     lidt [abs IDTR] ; Load our IDTR
 
-    mov al, 0xFC       ; OCW1: Unmask all interrupts at master PIC.
+    mov al, 0xF8       ; OCW1: Unmask IRQ0 (timer), IRQ1 (keyboard), IRQ2 (cascade).
     out PIC1_DATA, al
-    mov al, 0xFF       ; OCW1: Unmask all interrupts at master PIC.
+    mov al, 0xEF       ; OCW1: Unmask IRQ12 (PS/2 mouse) at the slave PIC.
     out PIC2_DATA, al
 
     ; Set all segments registers to DATA_SEG.

@@ -16,6 +16,7 @@
 #include "doomgeneric.h"
 #include "doomkeys.h"
 #include "i_video.h"
+#include "d_event.h"
 
 /* ---- VGA ports ------------------------------------------------------- */
 
@@ -318,6 +319,181 @@ static void keyboard_flush(void)
     scan_rpos = *k->scan_wpos;
 }
 
+/* ---- Mouse ----------------------------------------------------------- */
+
+/*
+ * The kernel IRQ 12 handler puts raw PS/2 mouse bytes into a ring (kernel
+ * service table version 2). DOOM turns the mouse on at start and off at
+ * exit through the 8042 controller. The 8042 setup runs with interrupts
+ * off, because the keyboard and mouse handlers would take the replies.
+ */
+
+#define PS2_DATA    0x60
+#define PS2_STATUS  0x64
+#define PS2_CMD     0x64
+
+static int     mouse_ok;
+static uint8_t mouse_rpos;
+static uint8_t mouse_pkt[3];
+static int     mouse_pkt_n;
+static int     mouse_buttons;
+static uint8_t ps2_saved_config;
+
+static int ps2_wait_write(void)
+{
+    int i;
+
+    for (i = 0; i < 100000; i++)
+        if (!(inb(PS2_STATUS) & 0x02))
+            return 1;
+    return 0;
+}
+
+static int ps2_read(void)
+{
+    int i;
+
+    for (i = 0; i < 100000; i++)
+        if (inb(PS2_STATUS) & 0x01)
+            return inb(PS2_DATA);
+    return -1;
+}
+
+static void ps2_flush(void)
+{
+    int i;
+
+    for (i = 0; i < 64 && (inb(PS2_STATUS) & 0x01); i++)
+        (void)inb(PS2_DATA);
+}
+
+static void ps2_command(uint8_t cmd)
+{
+    ps2_wait_write();
+    outb(PS2_CMD, cmd);
+}
+
+static void ps2_data(uint8_t v)
+{
+    ps2_wait_write();
+    outb(PS2_DATA, v);
+}
+
+/* Send a byte to the mouse. Returns 1 if the mouse acknowledges (0xFA). */
+static int mouse_send(uint8_t v)
+{
+    ps2_command(0xD4);                  /* next data byte goes to the mouse */
+    ps2_data(v);
+    return ps2_read() == 0xFA;
+}
+
+static uint64_t irq_save(void)
+{
+    uint64_t flags;
+
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags));
+    return flags;
+}
+
+static void irq_restore(uint64_t flags)
+{
+    if (flags & 0x200)
+        __asm__ volatile("sti");
+}
+
+static void mouse_start(void)
+{
+    struct f64_ksvc *k = f64_boot->ksvc;
+    uint64_t flags;
+    int cfg;
+
+    if (k->version < 2)
+    {
+        printf("I_InitMouse: kernel has no mouse ring\n");
+        return;
+    }
+
+    flags = irq_save();
+    ps2_flush();
+    ps2_command(0xA8);                  /* enable the mouse port */
+    ps2_command(0x20);                  /* read the configuration byte */
+    cfg = ps2_read();
+    if (cfg >= 0)
+    {
+        ps2_saved_config = cfg;
+        ps2_command(0x60);              /* write the configuration byte */
+        ps2_data((cfg | 0x02) & ~0x20); /* mouse IRQ on, mouse clock on */
+        mouse_ok = mouse_send(0xF6)     /* set defaults */
+                && mouse_send(0xF4);    /* start data reporting */
+    }
+    ps2_flush();
+    mouse_rpos = *k->mouse_wpos;
+    mouse_pkt_n = 0;
+    mouse_buttons = 0;
+    irq_restore(flags);
+
+    printf(mouse_ok ? "I_InitMouse: PS/2 mouse\n" : "I_InitMouse: no PS/2 mouse\n");
+}
+
+static void mouse_stop(void)
+{
+    uint64_t flags;
+
+    if (!mouse_ok)
+        return;
+    flags = irq_save();
+    mouse_send(0xF5);                   /* stop data reporting */
+    ps2_flush();
+    ps2_command(0x60);
+    ps2_data(ps2_saved_config);
+    if (ps2_saved_config & 0x20)
+        ps2_command(0xA7);              /* the mouse port was off: turn it off */
+    ps2_flush();
+    irq_restore(flags);
+    mouse_ok = 0;
+}
+
+/* Decode the 3-byte packets in the mouse ring and post one DOOM mouse
+ * event. Called from I_GetEvent. Up/down movement is not used: DOOM
+ * would move forward and back with it ("novert" behavior), which is
+ * not what you expect when you turn with the mouse. */
+void f64_mouse_events(void)
+{
+    struct f64_ksvc *k = f64_boot->ksvc;
+    int dx = 0, buttons = mouse_buttons, got = 0;
+    event_t ev;
+
+    if (!mouse_ok)
+        return;
+
+    while (mouse_rpos != *k->mouse_wpos)
+    {
+        uint8_t b = k->mouse_ring[mouse_rpos++];
+
+        if (mouse_pkt_n == 0 && !(b & 0x08))
+            continue;                   /* bit 3 is always set in byte 0: resync */
+        mouse_pkt[mouse_pkt_n++] = b;
+        if (mouse_pkt_n < 3)
+            continue;
+        mouse_pkt_n = 0;
+        buttons = mouse_pkt[0] & 0x07;  /* left, right, middle */
+        got = 1;
+        if (mouse_pkt[0] & 0xC0)
+            continue;                   /* overflow: ignore the movement */
+        dx += (int)mouse_pkt[1] - ((mouse_pkt[0] << 4) & 0x100);
+    }
+
+    if (!got || (dx == 0 && buttons == mouse_buttons))
+        return;
+    mouse_buttons = buttons;
+    ev.type = ev_mouse;
+    ev.data1 = buttons;
+    ev.data2 = dx;
+    ev.data3 = 0;
+    ev.data4 = 0;
+    D_PostEvent(&ev);
+}
+
 /* ---- doomgeneric interface ------------------------------------------- */
 
 static uint64_t start_ticks;
@@ -399,6 +575,7 @@ void f64_platform_start(void)
     pit_set_hz(1000);
     start_ticks = *f64_boot->ksvc->ticks;
     scan_rpos = *f64_boot->ksvc->scan_wpos;
+    mouse_start();
 }
 
 void f64_platform_stop(void)
@@ -406,6 +583,7 @@ void f64_platform_stop(void)
     int i;
 
     f64_sound_shutdown();
+    mouse_stop();
     pit_set_hz(0);
     vga_text_mode();
     for (i = 0; i < TEXT_BYTES; i++)
