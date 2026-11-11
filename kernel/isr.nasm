@@ -69,6 +69,13 @@ scan_ring_write_pos db 0
 scan_ring:
     times 256 db 0
 
+; ring buffer of raw PS/2 mouse bytes (3-byte packets). The kernel does not
+; turn on the mouse. A native program that wants mouse input (DOOM) turns it
+; on and reads this ring through the kernel service table.
+mouse_ring_write_pos db 0
+mouse_ring:
+    times 256 db 0
+
 ; ring buffer for keyboard input
 ring_buffer_write_pos db 0
 ring_buffer_read_pos db 0
@@ -319,9 +326,16 @@ ISR_keyboard:
     push rax
     push rbx
     push rcx
-    xor rax, rax         
+    xor rax, rax
+    ; bit 5 of the 8042 status is set when the byte comes from the PS/2 mouse.
+    in al, 0x64
+    mov ah, al
     ; we MUST read the byte from keyboard (or else we get no more interrupts!).
     in al, 0x60
+    ; a mouse byte is not a scancode: put it in the mouse ring
+    test ah, 0x20
+    jnz ISR_keyboard.aux
+    xor ah, ah
     ; store the raw scancode for native programs
     movzx rbx, byte [scan_ring_write_pos]
     mov rcx, scan_ring
@@ -371,6 +385,10 @@ ISR_keyboard:
     pop rbx
     pop rax
     iretq
+    ; a byte from the PS/2 mouse arrived with IRQ1: keep it for the mouse ring
+.aux:
+    call Store_mouse_byte
+    jmp ISR_keyboard.done
     ; if shift is pressed, we turn shift_state to "on" (1)
 .shift:
     mov [shift_state], byte 1
@@ -379,6 +397,51 @@ ISR_keyboard:
 .unshift:
     mov [shift_state], byte 0
     jmp ISR_keyboard.done
+
+Store_mouse_byte:
+;*****************************************************************************;
+; Put the byte in al into the mouse ring. Uses rbx and rcx.                   ;
+;*****************************************************************************;
+    movzx rbx, byte [mouse_ring_write_pos]
+    mov rcx, mouse_ring
+    mov [rcx + rbx], al
+    inc bl
+    mov [mouse_ring_write_pos], bl
+    ret
+
+
+ISR_mouse:
+;*****************************************************************************;
+; PS/2 Mouse Interrupt Service Routine (IRQ12 mapped to INT 0x2C)             ;
+;*****************************************************************************;
+    push rax
+    push rbx
+    push rcx
+    in al, 0x64
+    test al, 0x01           ; no data: nothing to do
+    jz .done
+    mov ah, al
+    in al, 0x60
+    test ah, 0x20           ; from the mouse?
+    jz .keyboard
+    call Store_mouse_byte
+    jmp .done
+.keyboard:
+    ; a keyboard byte arrived with IRQ12: keep it as a raw scancode
+    movzx rbx, byte [scan_ring_write_pos]
+    mov rcx, scan_ring
+    mov [rcx + rbx], al
+    inc bl
+    mov [scan_ring_write_pos], bl
+.done:
+    mov al, PIC_EOI
+    out PIC2_COMMAND, al    ; IRQ 8-15 need an EOI to both PICs
+    out PIC1_COMMAND, al
+    pop rcx
+    pop rbx
+    pop rax
+    iretq
+
 
 kbd_get_char:
     push rbx

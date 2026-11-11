@@ -24,6 +24,8 @@ f64OS file system and starts it with the `CALL-NATIVE` word.
    ENDOOM screen comes on. Push a key to go back to the Forth prompt.
 
 QEMU must have 128 MiB of RAM (`-m 128M`). The run scripts set this value.
+For sound, QEMU must also have the `sb16` and `adlib` devices. Refer to
+[Sound](#sound).
 
 Get Freedoom from <https://freedoom.github.io>. Freedoom has a BSD
 license. Do not add WAD files to git. The `.gitignore` file excludes them.
@@ -33,15 +35,55 @@ license. Do not add WAD files to git. The `.gitignore` file excludes them.
 | Key | Function |
 | --- | --- |
 | Up and down arrows, or W and S | Move forward and back |
-| Left and right arrows | Turn |
+| Left and right arrows, or mouse left and right | Turn |
 | A and D | Strafe left and right |
-| Ctrl | Fire |
+| Ctrl, or left mouse button | Fire |
+| Right mouse button | Strafe (with mouse movement) |
+| Middle mouse button | Move forward |
 | Space bar | Use (open doors, push switches) |
 | Shift | Run |
 | Alt | Strafe |
 | 1 to 7 | Select weapon |
 | Tab | Automap |
 | Esc | Menu |
+
+The mouse turns only. It does not move you forward and back. Most players
+turn with the mouse and move with the keys. In the QEMU window, click to
+give the mouse to the guest. Push **Ctrl+Alt+G** to release it. Use
+**Options**, **Mouse sensitivity** in the DOOM menu to change the speed.
+
+## Sound
+
+DOOM plays sound effects on a Sound Blaster 16 and music on an OPL2 FM
+synthesizer (AdLib), as on DOS. The run scripts add these QEMU parameters:
+
+```
+-audiodev dsound,id=snd0 -device sb16,audiodev=snd0 -device adlib,audiodev=snd0
+```
+
+- `run.ps1` uses the `dsound` audio driver and the SDL window
+  (`-display sdl`). On Windows, the default GTK window shows a black screen
+  in graphics mode while the `sb16` DMA runs. QEMU makes the frames
+  correctly, but the GTK window does not show them. The SDL window shows
+  them.
+- `run.sh` uses the driver in the `AUDIO` variable. The default is `pa`
+  (PulseAudio). Example: `AUDIO=pipewire ./run.sh`.
+
+If QEMU has no `sb16` or no `adlib` device, DOOM runs without sound
+effects or without music. Use the DOOM menu (**Options**, **Sound Volume**)
+to change the volume.
+
+| Part | Data |
+| --- | --- |
+| Sound effects | 8-bit stereo at 22050 Hz, up to 16 sounds at the same time, DMA 1, IRQ 5 |
+| Music | OPL2 at port 0x388, 9 voices, instruments from the `GENMIDI` lump |
+| Music formats | MIDI, and MUS (DOOM IWADs) through `mus2mid` |
+
+The sound effects use a 16 KiB ring buffer at `0xF00000`, because ISA DMA
+cannot use memory above 16 MiB. The SB16 gives IRQ 5 after each half of
+the ring. A small IRQ handler writes zero-level audio into the finished half.
+Thus, when DOOM loads a level, the card plays no sound. It does not play
+the previous audio again. DOOM puts back the IRQ 5 vector and the PIC mask when it stops.
 
 ## Build requirements
 
@@ -65,6 +107,8 @@ build fails, they make `os.bin` without DOOM.
 | Loader | `disk_files/doom/doom.f` | Reads `doom.bin` and the IWAD into RAM, fills the boot block, and starts DOOM with `CALL-NATIVE` |
 | Entry | `f64/f64_entry.c` | Clears the BSS, starts DOOM, and catches `exit()` |
 | Platform | `f64/doomgeneric_f64.c` | VGA mode 13h, PIT at 1000 Hz, keyboard scancodes, ENDOOM |
+| Sound effects | `f64/sound_f64.c` | Sound Blaster 16 driver, mixer, IRQ 5 handler |
+| Music | `f64/music_f64.c` | MIDI player for the OPL2 with `GENMIDI` instruments |
 | C library | `f64/libc.c`, `f64/include/` | Memory allocator, strings, `printf`, `sscanf`, files in RAM |
 | DOOM | `doomgeneric/` | Upstream doomgeneric source (GPL-2.0) |
 
@@ -76,16 +120,23 @@ build fails, they make `os.bin` without DOOM.
 | `0x1C00000` to `0x1FFFFFF` | DOOM stack (4 MiB) |
 | `0x2000000` | IWAD file |
 | After the IWAD, to `0x6FFFFFF` | Heap for `malloc` |
+| `0xF00000` to `0xF03FFF` | Sound Blaster DMA buffer (16 KiB) |
 
 ### Kernel changes
 
 - `kernel.nasm` sets the SSE bits in CR0 and CR4, because the gcc code uses
   SSE instructions. The task switcher does not save XMM0 to XMM15. Thus, only
   the Forth task can use SSE.
-- `kernel.nasm` has a kernel service table. The Forth word `KSERVICES`
-  gives its address.
+- `kernel.nasm` has a kernel service table, version 2. The Forth word
+  `KSERVICES` gives its address. Version 2 adds the mouse ring.
 - `isr.nasm` writes each raw scancode into a 256-byte ring. DOOM reads key
   press and key release data from this ring.
+- `isr.nasm` has an IRQ 12 handler for the PS/2 mouse. It writes each mouse
+  byte into a second 256-byte ring. The keyboard handler also sends mouse
+  bytes to this ring, because the controller can send them with IRQ 1. The kernel does
+  not turn on the mouse. DOOM turns it on when it starts and turns it off
+  when it stops.
+- `kernel.nasm` unmasks IRQ 2 (cascade) and IRQ 12 at the PIC.
 - `isr.nasm` shows the RIP for faults on the screen and sends it to COM1.
   In graphics mode, use `-serial stdio` in QEMU to see these messages.
 - `f64_baremetal.nasm` has the new words `KSERVICES` and `CALL-NATIVE`.
@@ -96,8 +147,6 @@ System V ABI get it as the first argument.
 
 ## Limits
 
-- There is no sound and no music.
-- There is no mouse.
 - Saved games and `default.cfg` are files in RAM. DOOM does not keep them
   after it stops.
 - DOOM output goes to COM1. Before DOOM sets the graphics mode, the output

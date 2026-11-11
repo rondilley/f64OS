@@ -7,6 +7,7 @@
 (   1C00000 - 1FFFFFF  DOOM stack, 4 MiB, grows down from 2000000       )
 (   2000000 - ...      IWAD file                                        )
 (   after IWAD - 6FFFFFF  heap for malloc                               )
+(   F00000 - F03FFF    Sound Blaster DMA buffer, below 16 MiB           )
 
 HEX
 1000000 CONSTANT DOOM-BASE
@@ -14,10 +15,11 @@ HEX
 2000000 CONSTANT DOOM-STACK
 2000000 CONSTANT WAD-BASE
 7000000 CONSTANT HEAP-END
+F00000 CONSTANT DMA-BASE
 DECIMAL
 
-( Boot block for doom.bin: 9 cells. See doom/f64/include/f64.h )
-9 CELLS ALLOT CONSTANT DOOM-BOOT
+( Boot block for doom.bin: 10 cells. See doom/f64/include/f64.h )
+10 CELLS ALLOT CONSTANT DOOM-BOOT
 : BOOT! ( value index -- ) CELLS DOOM-BOOT + ! ;
 
 0 VALUE LD-LBA
@@ -90,6 +92,7 @@ DECIMAL
                        6 BOOT!
     HEAP-END           7 BOOT!
     DOOM-LIMIT         8 BOOT!
+    DMA-BASE           9 BOOT!
 
     DOOM-BOOT DOOM-BASE DOOM-STACK CALL-NATIVE
     ?DUP IF

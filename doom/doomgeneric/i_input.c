@@ -324,6 +324,13 @@ void I_GetEvent(void)
     }
 
 
+#ifdef F64OS
+    {
+        void f64_mouse_events(void);
+
+        f64_mouse_events();
+    }
+#endif
                 /*
             case SDL_MOUSEMOTION:
                 event.type = ev_mouse;

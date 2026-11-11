@@ -69,7 +69,7 @@ IDT_START:
   .idtentry ISR_dummy           , CODE_SEG, 0x8F  ;41 (IRQ9: Free)
   .idtentry ISR_dummy           , CODE_SEG, 0x8F  ;42 (IRQ10: Free)
   .idtentry ISR_dummy           , CODE_SEG, 0x8F  ;43 (IRQ11: Free)
-  .idtentry ISR_dummy           , CODE_SEG, 0x8F  ;44 (IRQ12: PS2 Mouse)
+  .idtentry ISR_mouse           , CODE_SEG, 0x8E  ;44 (IRQ12: PS2 Mouse)
   .idtentry ISR_dummy           , CODE_SEG, 0x8F  ;45 (IRQ13: Coprocessor)
   .idtentry ISR_dummy           , CODE_SEG, 0x8F  ;46 (IRQ14: Primary ATA Hard Disk)
   .idtentry ISR_dummy           , CODE_SEG, 0x8F  ;47 (IRQ15: Secondary ATA Hard Disk)

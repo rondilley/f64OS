@@ -20,7 +20,8 @@ struct f64_boot *f64_boot;
 static void *exit_buf[5];
 static int   exit_status;
 static char  iwad_name[64];
-static char *doom_argv[] = { "doom", "-iwad", iwad_name, NULL };
+/* -mb 16: a 16 MiB zone, so sound effects can stay cached. */
+static char *doom_argv[] = { "doom", "-iwad", iwad_name, "-mb", "16", NULL };
 
 __attribute__((section(".entry"), used, noinline))
 const char *f64_main(struct f64_boot *boot)
@@ -50,7 +51,7 @@ const char *f64_main(struct f64_boot *boot)
 
     if (__builtin_setjmp(exit_buf) == 0)
     {
-        doomgeneric_Create(3, doom_argv);
+        doomgeneric_Create(5, doom_argv);
         for (;;)
             doomgeneric_Tick();
     }
