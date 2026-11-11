@@ -30,7 +30,7 @@ CFLAGS := -O2 -std=gnu99 -ffreestanding -nostdinc -isystem $(GCCINC) \
           -mno-red-zone -fno-pic -fno-pie -fno-stack-protector -fcommon \
           -fno-asynchronous-unwind-tables -fno-unwind-tables \
           -fno-strict-aliasing -fwrapv \
-          -DF64OS -DCMAP256 -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200 \
+          -DF64OS -DFEATURE_SOUND -DCMAP256 -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200 \
           -Wall -Wno-unused -Wno-pointer-sign -Wno-format \
           -Wno-missing-braces -Wno-char-subscripts \
           -Werror=implicit-function-declaration
@@ -53,11 +53,12 @@ DOOM_SRC := dummy am_map doomdef doomstat dstrings d_event d_items d_iwad \
   p_pspr p_saveg p_setup p_sight p_spec p_switch p_telept p_tick p_user r_bsp \
   r_data r_draw r_main r_plane r_segs r_sky r_things sha1 sounds statdump \
   st_lib st_stuff s_sound tables v_video wi_stuff w_checksum w_file w_main \
-  w_wad z_zone w_file_stdc i_input i_video doomgeneric
+  w_wad z_zone w_file_stdc i_input i_video doomgeneric mus2mid
 
 OBJDIR := build
 # f64_entry must be first: the loader jumps to the first byte of doom.bin.
 OBJS := $(OBJDIR)/f64_entry.o $(OBJDIR)/doomgeneric_f64.o $(OBJDIR)/libc.o \
+        $(OBJDIR)/sound_f64.o $(OBJDIR)/music_f64.o \
         $(addprefix $(OBJDIR)/,$(addsuffix .o,$(DOOM_SRC)))
 
 OUT := ../disk_files/doom/doom.bin
@@ -72,11 +73,11 @@ $(OUT): $(OBJDIR)/doom.exe
 $(OBJDIR)/doom.exe: $(OBJS) $(LDSCRIPT)
 	$(LD) $(LDFLAGS) -T $(LDSCRIPT) -nostdlib -o $@ $(OBJS) -Map=$(OBJDIR)/doom.map
 
-$(OBJDIR)/%.o: f64/%.c f64/include/f64.h | $(OBJDIR)
+$(OBJDIR)/%.o: f64/%.c f64/include/f64.h Makefile | $(OBJDIR)
 	@echo "  CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJDIR)/%.o: doomgeneric/%.c | $(OBJDIR)
+$(OBJDIR)/%.o: doomgeneric/%.c Makefile | $(OBJDIR)
 	@echo "  CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 

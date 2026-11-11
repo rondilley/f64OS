@@ -58,5 +58,10 @@ if ($LASTEXITCODE) { throw 'bootfile_extend.py failed' }
 
 if (-not $BuildOnly) {
     # 128 MiB: DOOM uses RAM up to 0x7000000 (see disk_files/doom/doom.f).
-    & $qemu -m 128M -drive format=raw,file=os.bin
+    # sb16 gives DOOM sound effects, adlib (OPL2) gives DOOM music.
+    # -display sdl: on Windows, the default GTK window stops showing the
+    # graphics mode while the sb16 DMA runs. The SDL window does not.
+    & $qemu -m 128M -display sdl -drive format=raw,file=os.bin `
+        -audiodev dsound,id=snd0 `
+        -device sb16,audiodev=snd0 -device adlib,audiodev=snd0
 }

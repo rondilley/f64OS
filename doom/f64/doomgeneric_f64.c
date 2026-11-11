@@ -343,6 +343,7 @@ void DG_DrawFrame(void)
         }
     }
     memcpy((void *)VGA_GRAPHICS, DG_ScreenBuffer, 320 * 200);
+    f64_sound_pump();
 }
 
 uint32_t DG_GetTicksMs(void)
@@ -354,8 +355,12 @@ void DG_SleepMs(uint32_t ms)
 {
     uint32_t until = DG_GetTicksMs() + ms;
 
+    f64_sound_pump();
     while ((int32_t)(DG_GetTicksMs() - until) < 0)
+    {
         f64_hlt();
+        f64_sound_pump();
+    }
 }
 
 void DG_SetWindowTitle(const char *title)
@@ -368,6 +373,7 @@ void f64_endoom(const unsigned char *data)
 {
     int i, sc;
 
+    f64_sound_shutdown();
     vga_text_mode();
     for (i = 0; i < TEXT_BYTES; i++)
         VGA_TEXT[i] = data[i];
@@ -399,6 +405,7 @@ void f64_platform_stop(void)
 {
     int i;
 
+    f64_sound_shutdown();
     pit_set_hz(0);
     vga_text_mode();
     for (i = 0; i < TEXT_BYTES; i++)

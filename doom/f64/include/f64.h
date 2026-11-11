@@ -33,6 +33,7 @@ struct f64_boot {
     uint8_t         *heap_start;   /* free RAM for malloc */
     uint8_t         *heap_end;
     uint8_t         *image_limit;  /* doom.bin + BSS must end below this */
+    uint8_t         *dma_buf;      /* 64 KiB aligned, below 16 MiB, for sound */
 };
 
 extern struct f64_boot *f64_boot;
@@ -60,6 +61,10 @@ void        f64_console_write(const char *s, size_t n);
 void        f64_console_clear(void);
 void        f64_console_graphics(int on);
 const char *f64_error_text(void);
+
+/* sound_f64.c and music_f64.c */
+void f64_sound_pump(void);      /* mix sound and run music events */
+void f64_sound_shutdown(void);  /* stop all sound output */
 
 /* doomgeneric_f64.c */
 void f64_platform_start(void);
