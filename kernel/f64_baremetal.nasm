@@ -538,6 +538,11 @@ _KEY:
 .store_char:
         test al, 0x80           ; Ignore non-ASCII keys (arrows 0x80..0x83) in line-input mode
         jnz .more_input
+        cmp al, 0x0A
+        je .skip
+        cmp al, 0x20            ; frag out anything below space (0x20)
+        jl .more_input
+.skip
         mov ah, 0x0F
         call vga_print_chr
         mov [rdi], al

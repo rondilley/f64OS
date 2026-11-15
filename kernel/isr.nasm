@@ -46,8 +46,8 @@ kbd_map_unshifted:
     db '`', 0, 0x5C                                          ; 0x29: `, 0x2A: LShift, 0x2B: backslash
     db 'z','x','c','v','b','n','m',',','.','/'               ; 0x2C..0x35: Bottom row
     db 0, '*', 0, ' '                                        ; 0x36: RShift, 0x37: KP*, 0x38: LAlt, 0x39: Space
-    times 14 db 0                                            ; 0x3A..0x47
-    db 0x80, 0x84, 0, 0x82, 0, 0x83, 0, 0, 0x81, 0x85        ; 0x48: Up, PGUP, 0, Left, 0, Right, PGDN
+    times 13 db 0                                            ; 0x3A..0x47
+    db 0x13, 0x80, 0x84, 0, 0x82, 0, 0x83, 0, 0, 0x81, 0x85  ; 0x47: Up, PGUP, 0, Left, 0, Right, PGDN
     times 46 db 0                                            ; 0x52..0x7F: Unused
 
 kbd_map_shifted:
