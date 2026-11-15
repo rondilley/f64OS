@@ -1456,6 +1456,8 @@
     HERE @      ( push start address )
 ;
 
+: MIN ( a b -- min ) 2DUP > IF SWAP THEN DROP ;
+: MAX ( a b -- max ) 2DUP < IF SWAP THEN DROP ;
 
 : UNUSED ( -- n ) GET-BRK HERE @ - 8 / ;
 

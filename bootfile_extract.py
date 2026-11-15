@@ -19,8 +19,7 @@ import struct
 import sys
 
 IMAGE = 'os.bin'
-DIR_NAME = 'doom'
-OUT_DIR = os.path.join('disk_files', 'doom')
+DIR_NAMES = ['doom', 'work']
 ROOT_LBA = 128
 SUFFIXES = ('.dsg', '.cfg')
 SKIP = ('temp.dsg',)
@@ -45,25 +44,29 @@ def main():
     img = open(IMAGE, 'rb').read()
     if len(img) < (ROOT_LBA + 4) * 512:
         return 0
-    doom = [e for e in read_dir(img, ROOT_LBA) if e[3] and e[0].lower() == DIR_NAME]
-    if not doom:
-        return 0
-    os.makedirs(OUT_DIR, exist_ok=True)
-    for name, start, size, is_dir in read_dir(img, doom[0][1]):
-        low = name.lower()
-        if is_dir or not low.endswith(SUFFIXES) or low in SKIP:
-            continue
-        if '/' in name or '\\' in name or name in ('.', '..'):
-            continue
-        data = img[start * 512:start * 512 + size]
-        if len(data) != size:
-            print('bootfile_extract: %s is outside the image, skipped' % name)
-            continue
-        path = os.path.join(OUT_DIR, name)
-        if os.path.exists(path) and open(path, 'rb').read() == data:
-            continue
-        open(path, 'wb').write(data)
-        print('bootfile_extract: %s (%d bytes)' % (path, size))
+    for DIR_NAME in DIR_NAMES:
+        dir_info = [e for e in read_dir(img, ROOT_LBA) if e[3] and e[0].lower() == DIR_NAME]
+        if not dir_info:
+            return 0
+        OUT_DIR = os.path.join('disk_files', DIR_NAME)
+        os.makedirs(OUT_DIR, exist_ok=True)
+        for name, start, size, is_dir in read_dir(img, dir_info[0][1]):
+            low = name.lower()
+            if is_dir:
+                continue
+            if dir_info[0] == 'doom' and (not low.endswith(SUFFIXES) or low in SKIP):
+                continue
+            if '/' in name or '\\' in name or name in ('.', '..'):
+                continue
+            data = img[start * 512:start * 512 + size]
+            if len(data) != size:
+                print('bootfile_extract: %s is outside the image, skipped' % name)
+                continue
+            path = os.path.join(OUT_DIR, name)
+            if os.path.exists(path) and open(path, 'rb').read() == data:
+                continue
+            open(path, 'wb').write(data)
+            print('bootfile_extract: %s (%d bytes)' % (path, size))
     return 0
 
 

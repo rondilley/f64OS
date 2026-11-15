@@ -75,8 +75,8 @@ ED-MAX ALLOT CONSTANT ED-PACK-BUF
     S" L:" SB-TYPE ED-CY 1+ SB-NUM
     S"  C:" SB-TYPE ED-CX 1+ SB-NUM
     ED-MSG-N 0> IF S"   " SB-TYPE ED-MSG-A ED-MSG-N SB-TYPE THEN
-    BEGIN SB-X 58 < WHILE 32 SB-EMIT REPEAT
-    S" TAB:Save  ESC:Forth " SB-TYPE
+    BEGIN SB-X 68 < WHILE 32 SB-EMIT REPEAT
+    S" ESC:Forth " SB-TYPE
     BEGIN SB-X 80 < WHILE 32 SB-EMIT REPEAT
 ;
 
@@ -140,7 +140,7 @@ ED-MAX ALLOT CONSTANT ED-PACK-BUF
 
 0 VALUE BS-PLEN
 
-: ED-BACKSPACE ( -- )
+: _ED-BACKSPACE ( -- )
     ED-CX 0> IF
         ED-CX 1- TO ED-CX
         79 ED-CX > IF
@@ -168,18 +168,44 @@ ED-MAX ALLOT CONSTANT ED-PACK-BUF
     THEN
 ;
 
+0 VALUE EN-IND
+
+: ED-INDENT ( -- n )
+    0
+    BEGIN
+        DUP ED-CX < IF
+            DUP ED-CY ED-ADDR C@ 32 =
+        ELSE
+            FALSE
+        THEN
+    WHILE
+        1+
+    REPEAT
+;
+
 : ED-ENTER ( -- )
     ED-CY ED-LINES 1- < IF
+        ED-INDENT TO EN-IND
         ED-CY ED-SHIFT-DOWN
         ED-CY 1+ ED-LINE ED-COLS BLANK-MEM
         ED-COLS ED-CX - 0> IF
-            ED-CX ED-CY ED-ADDR  ED-CY 1+ ED-LINE  ED-COLS ED-CX - CMOVE
+            ED-CX ED-CY ED-ADDR
+            EN-IND ED-CY 1+ ED-ADDR
+            ED-COLS ED-CX - ED-COLS EN-IND - MIN CMOVE
             ED-CX ED-CY ED-ADDR  ED-COLS ED-CX - BLANK-MEM
         THEN
-        0 TO ED-CX
+        EN-IND TO ED-CX
         ED-CY 1+ TO ED-CY
         ED-CLAMP-SCROLL
         1 TO ED-DIRTY
+    THEN
+;
+
+: ED-BACKSPACE ( -- )
+    ED-CX 0>  ED-INDENT ED-CX = AND IF
+        ED-CX 1- 4 MOD 1+ 0 DO _ED-BACKSPACE LOOP
+    ELSE
+        _ED-BACKSPACE
     THEN
 ;
 
@@ -283,8 +309,8 @@ ED-MAX ALLOT CONSTANT ED-PACK-BUF
             ." Exited. FE:resume SAVE:save ED-UNLOAD:unload" CR
             EXIT
         THEN
-        DUP 9 = OVER 19 = OR IF
-            DROP ED-SAVE
+        DUP 9 = IF
+            DROP 4 0 DO 32 ED-INS-CH LOOP
         ELSE DUP 128 = IF
             DROP ED-CY 0> IF ED-CY 1- TO ED-CY ED-CLAMP-SCROLL THEN
         ELSE DUP 129 = IF
