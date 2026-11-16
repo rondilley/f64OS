@@ -1458,6 +1458,7 @@
 
 : MIN ( a b -- min ) 2DUP > IF SWAP THEN DROP ;
 : MAX ( a b -- max ) 2DUP < IF SWAP THEN DROP ;
+: PAGE ( -- ) CLS ;
 
 : UNUSED ( -- n ) GET-BRK HERE @ - 8 / ;
 
