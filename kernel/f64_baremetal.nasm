@@ -369,6 +369,31 @@ defcode "C@", FETCHBYTE
         push rax
         NEXT
 
+defcode "W!", STOREWORD
+        pop rbx
+        pop rax
+        mov [rbx], ax
+        NEXT
+
+defcode "W@", FETCHWORD
+        pop rbx
+        xor rax, rax
+        mov ax, [rbx]
+        push rax
+        NEXT
+
+defcode "L!", STORELONG
+        pop rbx
+        pop rax
+        mov [rbx], eax
+        NEXT
+
+defcode "L@", FETCHLONG
+        pop rbx
+        mov eax, [rbx]
+        push rax
+        NEXT
+
 ; C@C! is a useful byte copy primitive.
 
 defcode "C@C!", CCOPY
@@ -542,7 +567,7 @@ _KEY:
         je .skip
         cmp al, 0x20            ; frag out anything below space (0x20)
         jl .more_input
-.skip
+.skip:
         mov ah, 0x0F
         call vga_print_chr
         mov [rdi], al
@@ -1560,6 +1585,21 @@ defcode "INW", INW
         pop rdx             ; port
         xor rax, rax
         in ax, dx
+        push rax
+        NEXT
+
+; ( val port -- ) Write 32-bit dword to I/O port
+defcode "OUTL", OUTL
+        pop rdx             ; port
+        pop rax             ; value
+        out dx, eax
+        NEXT
+
+; ( port -- val ) Read 32-bit dword from I/O port
+defcode "INL", INL
+        pop rdx             ; port
+        xor rax, rax
+        in eax, dx
         push rax
         NEXT
 
