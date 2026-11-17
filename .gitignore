@@ -9,3 +9,4 @@ disk_files/doom/*.WAD
 # DOOM savegames and config, copied out of os.bin by bootfile_extract.py
 disk_files/doom/*.dsg
 disk_files/doom/*.cfg
+disk_files/work/*

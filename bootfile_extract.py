@@ -47,14 +47,14 @@ def main():
     for DIR_NAME in DIR_NAMES:
         dir_info = [e for e in read_dir(img, ROOT_LBA) if e[3] and e[0].lower() == DIR_NAME]
         if not dir_info:
-            return 0
+            continue
         OUT_DIR = os.path.join('disk_files', DIR_NAME)
         os.makedirs(OUT_DIR, exist_ok=True)
         for name, start, size, is_dir in read_dir(img, dir_info[0][1]):
             low = name.lower()
             if is_dir:
                 continue
-            if dir_info[0] == 'doom' and (not low.endswith(SUFFIXES) or low in SKIP):
+            if DIR_NAME == 'doom' and (not low.endswith(SUFFIXES) or low in SKIP):
                 continue
             if '/' in name or '\\' in name or name in ('.', '..'):
                 continue
