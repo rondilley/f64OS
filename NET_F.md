@@ -7,7 +7,7 @@
 * **ARP Cache, Request/Reply, and Subnet/Gateway Routing**
 * **IPv4 Packet Assembly, Demultiplexing, and RFC 1071 Checksums**
 * **ICMP Echo Request (`PING`) and Automatic Echo Reply**
-* **UDP Datagrams & DNS A-Record Resolver (`DNS-LOOKUP`)**
+* **UDP Datagrams, DHCP Client (`DHCP`), & DNS A-Record Resolver (`DNS-LOOKUP`)**
 * **TCP Client & Server State Machine (`TCP-CONNECT`, `TCP-ACCEPT`, `TCP-SEND`, `TCP-RECV`, `TCP-CLOSE`)**
 * **HTTP/1.0 Client (`HTTP-GET`)**
 
@@ -15,7 +15,7 @@
 
 ## 1. Quick Start
 
-QEMU attaches an Intel `e1000` network card connected to its user-mode (SLIRP) virtual network (`10.0.2.0/24`) by default—no changes to [run.sh](file:///home/tliston/Research/bare-metal/f64OS/run.sh) or [run.ps1](file:///home/tliston/Research/bare-metal/f64OS/run.ps1) are required.
+QEMU and Virtual Machine Manager (`virt-manager`) both run an internal DHCP server on their virtual networks (`10.0.2.0/24` for QEMU user-mode networking, `192.168.122.0/24` for libvirt's `virbr0` NAT bridge).
 
 At the f64OS Forth prompt, load the stack:
 
@@ -23,12 +23,14 @@ At the f64OS Forth prompt, load the stack:
 INCLUDE net.f
 ```
 
-`net.f` discovers and initializes the `e1000` controller on the PCI bus and prints the active configuration:
+`net.f` discovers and initializes the `e1000` controller on the PCI bus, runs a full 4-way **DHCP** handshake (`DISCOVER` $\to$ `OFFER` $\to$ `REQUEST` $\to$ `ACK`) to dynamically acquire `MY-IP`, `NET-MASK`, `GW-IP`, and `DNS-IP`, and prints the leased configuration:
 
 ```text
+Acquiring IP via DHCP... OK
 f64OS TCP/IP stack ready.
 NIC MAC : 52:54:00:12:34:56
 Local IP: 10.0.2.15
+Netmask : 255.255.255.0
 Gateway : 10.0.2.2
 DNS Srv : 10.0.2.3
 ```
@@ -90,10 +92,10 @@ While standard f64 Forth provides 64-bit (`@`, `!`) and 8-bit (`C@`, `C!`) memor
 
 ### 2.2 PCI Discovery & MMIO Remapping (`E1000-INIT`)
 1. **PCI Bus Scan**: `E1000-INIT` scans Bus 0 (`devices 0..31`, function 0) using PCI Configuration Mechanism #1 (`0xCF8` address port, `0xCFC` data port) looking for Vendor ID `0x8086` and Device ID `0x100E` (`0x100E8086` = `269385862`).
-2. **Remapping `BAR0` into Identity-Mapped Memory**:
-   - At boot, SeaBIOS assigns `e1000`'s `BAR0` MMIO region to `0xFEB80000` (~4 GiB).
-   - However, [stage2/paging.nasm](file:///home/tliston/Research/bare-metal/f64OS/stage2/paging.nasm) identity-maps only the first **1 GiB** of physical address space (`0x00000000`–`0x3FFFFFFF`).
-   - Rather than modifying the bootloader's page tables, `E1000-INIT` writes `0x3FE00000` (`E1000-MMIO`, at 1022 MiB—well above the 128 MiB RAM ceiling and inside the 1 GiB identity map) directly to the NIC's PCI `BAR0` register (`offset 0x10`), and writes `0x0007` (I/O Space + Memory Space + Bus Master DMA Enable) to the PCI Command register (`offset 0x04`).
+2. **Mapping BIOS `BAR0` into the Page Directory (`PD[511]`)**:
+   - At boot, SeaBIOS assigns `e1000`'s `BAR0` MMIO region to `0xFEB80000` (~4 GiB, inside the hardware 32-bit PCI MMIO hole).
+   - However, [stage2/paging.nasm](file:///home/tliston/Research/bare-metal/f64OS/stage2/paging.nasm) identity-maps only the first **1 GiB** of physical address space (`0x00000000`–`0x3FFFFFFF`). And on VMs configured with $\ge 1\text{ GiB}$ of RAM (such as the default in Virtual Machine Manager), physical address `0x3FE00000` is backed by system RAM rather than the PCI bus.
+   - To work with any amount of VM RAM, `E1000-INIT` keeps the BIOS-assigned `BAR0` physical address (`E1000-BAR0`), updates the last 2 MiB Page Directory entry (`PD[511]` at physical address `0x3FF8`, which maps virtual `0x3FE00000`–`0x3FFFFFFF`) to point to `E1000-BAR0`'s 2 MiB physical frame with `PAGE_PRESENT | PAGE_WRITE | PAGE_PWT | PAGE_PCD | PAGE_PS` (`0x9B`), sets `E1000-MMIO` to `0x3FE00000 + (E1000-BAR0 & 0x1FFFFF)`, and writes `0x0007` (I/O Space + Memory Space + Bus Master DMA Enable) to the PCI Command register (`offset 0x04`).
 3. **MAC Address & Link Setup**:
    - Masks hardware interrupts (`IMC = 0x00D8`), sets `SLU` (Set Link Up) and `ASDE` in `CTRL` (`0x0000`), and reads the 6-byte hardware MAC address from `RAL0` (`0x5400`) and `RAH0` (`0x5404`) into `MY-MAC`.
 4. **DMA Descriptor Rings**:
@@ -122,8 +124,12 @@ While standard f64 Forth provides 64-bit (`@`, `!`) and 8-bit (`C@`, `C!`) memor
 
 ---
 
-### 2.5 UDP & DNS Resolver (`DNS-LOOKUP`)
+### 2.5 UDP, DHCP Client (`DHCP`), & DNS Resolver (`DNS-LOOKUP`)
 * **`UDP-SEND` / `UDP-HANDLE`**: Sends and receives UDP datagrams (IPv4 protocol `17`), storing the most recent incoming payload in `UDP-RX-DATA` (`UDP-RX-LEN` bytes) and destination port in `UDP-RX-PORT`.
+* **`DHCP ( -- flag )` (RFC 2131)**:
+  - Broadcasts a `DHCPDISCOVER` (`Option 53 = 1`) from `0.0.0.0:68` to `255.255.255.255:67` (`FF:FF:FF:FF:FF:FF`) requesting Subnet Mask (`Option 1`), Router (`Option 3`), and DNS Server (`Option 6`).
+  - Parses the incoming `DHCPOFFER` (`Option 53 = 2`), extracts the offered `yiaddr` and server identifier (`Option 54`), and broadcasts a `DHCPREQUEST` (`Option 53 = 3`).
+  - Upon receiving `DHCPACK` (`Option 53 = 5`), sets `MY-IP`, `NET-MASK`, `GW-IP`, and `DNS-IP` automatically (falling back to `10.0.2.15/24` only if no DHCP server responds).
 * **`DNS-LOOKUP ( name-addr name-len -- ip32 | 0 )`**:
   - Converts a dotted domain string (e.g. `"example.com"`) into DNS wire-format length-prefixed labels (`\x07example\x03com\x00`) via `DNS-ENCODE-NAME`.
   - Sends a standard recursive `A`-record (`Type 1`, `Class IN`) query to `DNS-IP` (`10.0.2.3`) on UDP port `53`.
@@ -185,6 +191,7 @@ stateDiagram-v2
 | Word | Stack Effect | Description |
 | :--- | :--- | :--- |
 | `PING` | `( dst-ip -- )` | Send ICMP Echo Request and print reply time in PIT ticks |
+| `DHCP` | `( -- flag )` | Acquire `MY-IP`, `NET-MASK`, `GW-IP`, and `DNS-IP` via DHCP (`TRUE` on lease) |
 | `UDP-SEND` | `( addr len sport dport dip -- )` | Send a UDP datagram to `dip:dport` from local port `sport` |
 | `DNS-LOOKUP` | `( name-addr name-len -- ip32 \| 0 )` | Resolve hostname to 32-bit IPv4 address via DNS (`0` if not found) |
 | `TCP-CONNECT` | `( dst-ip dst-port -- flag )` | Open active TCP connection (`TRUE` when `SYN+ACK` handshake completes) |

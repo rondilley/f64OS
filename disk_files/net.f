@@ -90,10 +90,10 @@ CONSTANT NET-ORIG-HERE
 
 ( --- Network Configuration [QEMU SLIRP Defaults] --------------------- )
 
-10 0 2 15  IP4 VALUE MY-IP
-10 0 2 2   IP4 VALUE GW-IP
-10 0 2 3   IP4 VALUE DNS-IP
-255 255 255 0 IP4 VALUE NET-MASK
+0 VALUE MY-IP
+0 VALUE GW-IP
+0 VALUE DNS-IP
+0 VALUE NET-MASK
 
 6 ALLOT CONSTANT MY-MAC
 6 ALLOT CONSTANT BCAST-MAC
@@ -103,10 +103,11 @@ CONSTANT NET-ORIG-HERE
 ( --- PCI Configuration & Intel e1000 NIC Driver ---------------------- )
 
 HEX
-3FE00000 CONSTANT E1000-MMIO
+3FE00000 VALUE E1000-MMIO
 DECIMAL
 
 0 VALUE E1000-DEV
+0 VALUE E1000-BAR0
 0 VALUE NET-READY
 
 : PCI-ADDR ( bus dev fn reg -- addr )
@@ -150,8 +151,10 @@ HERE @ 15 + 15 INVERT AND HERE !
         FALSE EXIT
     THEN
 
-    ( Map BAR0 to E1000-MMIO [0x3FE00000] and enable Bus Master + MMIO )
-    E1000-MMIO 0 E1000-DEV 0 16 PCI!
+    ( Map BIOS BAR0 physical page into PD[511] at virtual 0x3FE00000 )
+    0 E1000-DEV 0 16 PCI@ 15 INVERT AND TO E1000-BAR0
+    E1000-BAR0 2097151 INVERT AND 155 OR 16376 !
+    1071644672 E1000-BAR0 2097151 AND + TO E1000-MMIO
     7          0 E1000-DEV 0 4  PCI!
 
     ( Disable interrupts and set Link Up [SLU | ASDE] )
@@ -337,6 +340,7 @@ HERE @ 15 + 15 INVERT AND HERE !
 0 VALUE ARP-DEADLINE
 
 : ARP-RESOLVE ( dst-ip -- mac-addr )
+    DUP 4294967295 = IF DROP BCAST-MAC EXIT THEN
     NEXT-HOP-IP TO ARP-TARGET
     ARP-TARGET ARP-FIND ?DUP IF EXIT THEN
     1 BCAST-MAC ARP-TARGET ARP-SEND
@@ -448,7 +452,7 @@ HERE @ 15 + 15 INVERT AND HERE !
 1536 ALLOT CONSTANT UDP-BUF
 0 VALUE UDP-RX-PORT
 0 VALUE UDP-RX-LEN
-512 ALLOT CONSTANT UDP-RX-DATA
+576 ALLOT CONSTANT UDP-RX-DATA
 
 : UDP-SEND ( addr len src-port dst-port dst-ip -- )
     >R >R >R
@@ -471,12 +475,119 @@ HERE @ 15 + 15 INVERT AND HERE !
     DROP 20 +
     DUP 2 + BE16@ TO UDP-RX-PORT
     DUP 4 + BE16@ 8 - DUP 0> IF
-        DUP 512 > IF DROP 512 THEN
+        DUP 576 > IF DROP 576 THEN
         DUP TO UDP-RX-LEN
         SWAP 8 + SWAP UDP-RX-DATA SWAP CMOVE
     ELSE
         2DROP
     THEN
+;
+
+( --- DHCP Client [RFC 2131: DISCOVER -> OFFER -> REQUEST -> ACK] ----- )
+
+300 ALLOT CONSTANT DHCP-PKT
+0 VALUE DHCP-TYPE
+0 VALUE DHCP-OFFER-IP
+0 VALUE DHCP-SRV-IP
+0 VALUE DHCP-T0
+0 VALUE DHCP-SAVED-IP
+
+: DHCP-BUILD-BASE ( -- )
+    DHCP-PKT 300 ZERO-MEM
+    1          DHCP-PKT 0 + C!
+    1          DHCP-PKT 1 + C!
+    6          DHCP-PKT 2 + C!
+    0          DHCP-PKT 3 + C!
+    956560166  DHCP-PKT 4 + BE32!
+    32768      DHCP-PKT 10 + BE16!
+    MY-MAC     DHCP-PKT 28 + 6 CMOVE
+    1669485411 DHCP-PKT 236 + BE32!
+;
+
+: DHCP-PARSE-OPTS ( -- )
+    0 TO DHCP-TYPE
+    240
+    BEGIN
+        DUP UDP-RX-LEN <
+    WHILE
+        DUP UDP-RX-DATA + C@
+        DUP 255 = IF 2DROP EXIT THEN
+        DUP 0= IF
+            DROP 1+
+        ELSE
+            OVER 2 + UDP-RX-DATA +
+            SWAP CASE
+                53 OF C@ TO DHCP-TYPE ENDOF
+                54 OF BE32@ TO DHCP-SRV-IP ENDOF
+                1  OF BE32@ TO NET-MASK ENDOF
+                3  OF BE32@ TO GW-IP ENDOF
+                6  OF BE32@ TO DNS-IP ENDOF
+                NIP
+            ENDCASE
+            DUP 1+ UDP-RX-DATA + C@ 2 + +
+        THEN
+    REPEAT
+    DROP
+;
+
+: DHCP-WAIT ( want-type -- flag )
+    NET-TICKS TO DHCP-T0
+    BEGIN
+        NET-POLL
+        UDP-RX-LEN 240 >= UDP-RX-PORT 68 = AND IF
+            UDP-RX-DATA 0 + C@ 2 =
+            UDP-RX-DATA 4 + BE32@ 956560166 = AND
+            UDP-RX-DATA 236 + BE32@ 1669485411 = AND IF
+                UDP-RX-DATA 16 + BE32@ TO DHCP-OFFER-IP
+                UDP-RX-DATA 20 + BE32@ ?DUP IF TO DHCP-SRV-IP THEN
+                DHCP-PARSE-OPTS
+                DUP DHCP-TYPE = IF DROP TRUE EXIT THEN
+            THEN
+            0 TO UDP-RX-LEN
+        THEN
+        NET-TICKS DHCP-T0 - 100 >
+    UNTIL
+    DROP FALSE
+;
+
+: DHCP ( -- flag )
+    MY-IP TO DHCP-SAVED-IP
+    0 TO MY-IP
+    0 TO DHCP-SRV-IP
+
+    ( 1. Broadcast DHCPDISCOVER )
+    DHCP-BUILD-BASE
+    53  DHCP-PKT 240 + C!  1 DHCP-PKT 241 + C!  1 DHCP-PKT 242 + C!
+    55  DHCP-PKT 243 + C!  3 DHCP-PKT 244 + C!
+    1   DHCP-PKT 245 + C!  3 DHCP-PKT 246 + C!  6 DHCP-PKT 247 + C!
+    255 DHCP-PKT 248 + C!
+    0 TO UDP-RX-LEN
+    DHCP-PKT 300 68 67 4294967295 UDP-SEND
+
+    2 DHCP-WAIT NOT IF
+        10 0 2 15     IP4 TO MY-IP
+        10 0 2 2      IP4 TO GW-IP
+        10 0 2 3      IP4 TO DNS-IP
+        255 255 255 0 IP4 TO NET-MASK
+        FALSE EXIT
+    THEN
+
+    ( 2. Broadcast DHCPREQUEST for offered IP )
+    DHCP-BUILD-BASE
+    53            DHCP-PKT 240 + C!  1 DHCP-PKT 241 + C!  3 DHCP-PKT 242 + C!
+    50            DHCP-PKT 243 + C!  4 DHCP-PKT 244 + C!
+    DHCP-OFFER-IP DHCP-PKT 245 + BE32!
+    54            DHCP-PKT 249 + C!  4 DHCP-PKT 250 + C!
+    DHCP-SRV-IP   DHCP-PKT 251 + BE32!
+    55            DHCP-PKT 255 + C!  3 DHCP-PKT 256 + C!
+    1             DHCP-PKT 257 + C!  3 DHCP-PKT 258 + C!  6 DHCP-PKT 259 + C!
+    255           DHCP-PKT 260 + C!
+    0 TO UDP-RX-LEN
+    DHCP-PKT 300 68 67 4294967295 UDP-SEND
+
+    5 DHCP-WAIT DROP
+    DHCP-OFFER-IP TO MY-IP
+    TRUE
 ;
 
 ( DNS A-Record Resolver over UDP port 53 )
@@ -785,10 +896,11 @@ HERE @ 15 + 15 INVERT AND HERE !
 ( --- High-Level Utilities: NET-INFO & HTTP-GET ----------------------- )
 
 : NET-INFO ( -- )
-    ." NIC MAC : " MY-MAC .MAC CR
-    ." Local IP: " MY-IP .IP CR
-    ." Gateway : " GW-IP .IP CR
-    ." DNS Srv : " DNS-IP .IP CR
+    ." NIC MAC : " MY-MAC .MAC ." (MY-MAC)" CR
+    ." Local IP: " MY-IP .IP ." (MY-IP)" CR
+    ." Netmask : " NET-MASK .IP ." (NET-MASK)" CR
+    ." Gateway : " GW-IP .IP ." (GW-IP)" CR
+    ." DNS Srv : " DNS-IP .IP ." (DNS-IP)" CR
 ;
 
 512 ALLOT CONSTANT HTTP-REQ
@@ -875,6 +987,8 @@ HERE @ 15 + 15 INVERT AND HERE !
 : INIT-NET ( -- )
     ['] (NET-DISPATCH) TO DISPATCH-XT
     E1000-INIT IF
+        ." Acquiring IP via DHCP... "
+        DHCP IF ." OK" CR ELSE ." Fallback to static" CR THEN
         ." f64OS TCP/IP stack ready." CR
         NET-INFO
     THEN
