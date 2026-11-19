@@ -1,14 +1,16 @@
 #! /usr/bin/env python
-"""Copy DOOM savegames and config files out of an old os.bin.
+"""Copy DOOM savegames/configs and the 'work' directory tree out of os.bin.
 
 The build makes os.bin again from disk_files/, so files that the OS
-wrote into the disk image are lost. Run this script before the build:
-it copies *.dsg and *.cfg files from the "doom" directory of the old
-os.bin into disk_files/doom/, and bootfile_extend.py puts them into the
-new image.
+wrote into the disk image would otherwise be lost. Run this script
+before the build:
+  - Copies *.dsg and *.cfg files from the "doom" directory of os.bin
+    into disk_files/doom/.
+  - Recursively copies all files and subdirectories from the "work"
+    directory of os.bin into disk_files/work/.
 
 The disk image is the master copy: a file in the image replaces the file
-with the same name in disk_files/doom/.
+with the same name in disk_files/.
 
 Disk format (see kernel/f64.f): the root directory is at LBA 128. A
 directory is 4 sectors of 64 entries. An entry is a 16-byte name (bit 7
@@ -38,35 +40,47 @@ def read_dir(img, lba):
     return entries
 
 
+def extract_dir(img, lba, out_dir, root_name, visited):
+    if lba in visited:
+        return
+    visited.add(lba)
+    if (lba + 4) * 512 > len(img):
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    for name, start, size, is_dir in read_dir(img, lba):
+        if '/' in name or '\\' in name or name in ('.', '..'):
+            continue
+        path = os.path.join(out_dir, name)
+        if is_dir:
+            if root_name != 'doom':
+                extract_dir(img, start, path, root_name, visited)
+            continue
+        low = name.lower()
+        if root_name == 'doom' and (not low.endswith(SUFFIXES) or low in SKIP):
+            continue
+        data = img[start * 512:start * 512 + size]
+        if len(data) != size:
+            print('bootfile_extract: %s is outside the image, skipped' % path)
+            continue
+        if os.path.exists(path) and open(path, 'rb').read() == data:
+            continue
+        open(path, 'wb').write(data)
+        print('bootfile_extract: %s (%d bytes)' % (path, size))
+
+
 def main():
     if not os.path.exists(IMAGE):
         return 0
     img = open(IMAGE, 'rb').read()
     if len(img) < (ROOT_LBA + 4) * 512:
         return 0
-    for DIR_NAME in DIR_NAMES:
-        dir_info = [e for e in read_dir(img, ROOT_LBA) if e[3] and e[0].lower() == DIR_NAME]
+    visited = {ROOT_LBA}
+    for dir_name in DIR_NAMES:
+        dir_info = [e for e in read_dir(img, ROOT_LBA) if e[3] and e[0].lower() == dir_name]
         if not dir_info:
             continue
-        OUT_DIR = os.path.join('disk_files', DIR_NAME)
-        os.makedirs(OUT_DIR, exist_ok=True)
-        for name, start, size, is_dir in read_dir(img, dir_info[0][1]):
-            low = name.lower()
-            if is_dir:
-                continue
-            if DIR_NAME == 'doom' and (not low.endswith(SUFFIXES) or low in SKIP):
-                continue
-            if '/' in name or '\\' in name or name in ('.', '..'):
-                continue
-            data = img[start * 512:start * 512 + size]
-            if len(data) != size:
-                print('bootfile_extract: %s is outside the image, skipped' % name)
-                continue
-            path = os.path.join(OUT_DIR, name)
-            if os.path.exists(path) and open(path, 'rb').read() == data:
-                continue
-            open(path, 'wb').write(data)
-            print('bootfile_extract: %s (%d bytes)' % (path, size))
+        out_dir = os.path.join('disk_files', dir_name)
+        extract_dir(img, dir_info[0][1], out_dir, dir_name, visited)
     return 0
 
 
