@@ -1,0 +1,479 @@
+( f64 BASIC V2 - beval.f: variables, arrays, strings, PEEK, POKE, expressions )
+DECIMAL
+
+( Deferred words for the recursive parts of the expression parser )
+VARIABLE 'EVAL
+VARIABLE 'EVPOW
+VARIABLE 'EVREL
+: EVAL ( -- val ) 'EVAL @ EXECUTE ;
+0 VALUE ETYPE                  ( type of the last value: 0 number, 1 string )
+0 VALUE EDEPTH
+: TYPE-NUM ( -- ) ETYPE IF E-TYPE THROW THEN ;
+: TYPE-STR ( -- ) ETYPE 0= IF E-TYPE THROW THEN ;
+: EVAL-NUM ( -- f ) EVAL TYPE-NUM ;
+: EVAL-STR ( -- addr len ) EVAL TYPE-STR ;
+: EVAL-INT ( -- n ) EVAL-NUM F>INT ;
+: EVAL-BYTE ( -- n ) EVAL-NUM F>BYTE ;
+: EVAL-ADDR ( -- n ) EVAL-NUM F>ADDR ;
+
+( ---- Variable names: two characters and a type. 962 names x 3 types. ---- )
+0 VALUE VTYPE                  ( 0 float, 1 string, 2 integer )
+: PARSE-NAME ( -- idx )
+    GETC 65 - 37 *
+    PEEKC ALNUM? IF
+        PEEKC DUP DIGIT? IF 47 - ELSE 54 - THEN + NEXTC
+        BEGIN PEEKC ALNUM? WHILE NEXTC REPEAT
+    THEN
+    0 TO VTYPE
+    PEEKC 36 = IF NEXTC 1 TO VTYPE ELSE PEEKC 37 = IF NEXTC 2 TO VTYPE THEN THEN
+;
+722 CONSTANT IDX-TI
+696 CONSTANT IDX-ST
+: VSLOT ( idx type -- addr ) SWAP 3 * + 16 * VARTAB-A + ;
+: ASLOT ( idx type -- addr ) SWAP 3 * + 8 * ARRTAB-A + ;
+
+( ---- Strings. Temporary strings live until the next statement. ---- )
+0 VALUE TS-PTR
+: TMP-RESET ( -- ) TMPSTR TO TS-PTR ;
+: TMP-ALLOC ( n -- addr )
+    TS-PTR SWAP OVER + DUP TMPSTR TMPSTR-SIZE + > IF E-COMPLEX THROW THEN
+    TO TS-PTR
+;
+: TMP-COPY ( addr len -- addr2 len )
+    DUP >R DUP TMP-ALLOC DUP >R SWAP CMOVE R> R>
+;
+0 VALUE SC-A
+0 VALUE SC-L
+: STR-CAT ( a1 l1 a2 l2 -- a l )
+    2 PICK OVER + DUP 255 > IF E-LONG THROW THEN
+    DUP TMP-ALLOC TO SC-A TO SC-L
+    2SWAP DUP >R SC-A SWAP CMOVE
+    SC-A R> + SWAP CMOVE
+    SC-A SC-L
+;
+
+( Variables keep strings in the string heap. GC copies the live strings )
+( from one half of the heap to the other half. )
+SHEAP-A VALUE SH-BASE
+SHEAP-A VALUE SH-PTR
+0 VALUE GC-TO
+0 VALUE GC-NEW
+: IN-SHEAP? ( addr -- flag ) SH-BASE SH-BASE SHEAP-SIZE + WITHIN ;
+: GC-MOVE ( slot -- )
+    DUP 8+ @ 0= IF DROP EXIT THEN
+    DUP @ IN-SHEAP? 0= IF DROP EXIT THEN
+    DUP @ GC-TO 2 PICK 8+ @ CMOVE
+    GC-TO OVER !
+    8+ @ GC-TO + TO GC-TO
+;
+: ARR-COUNT ( blk -- n ) 1 OVER @ 0 DO OVER I 2 + CELLS + @ * LOOP NIP ;
+: ARR-DATA ( blk -- addr ) DUP @ 2 + CELLS + ;
+: ARR-GC ( blk -- )
+    DUP ARR-COUNT SWAP ARR-DATA SWAP 0 DO DUP I 16 * + GC-MOVE LOOP DROP
+;
+: GC ( -- )
+    SH-BASE SHEAP-A = IF SHEAP-B ELSE SHEAP-A THEN DUP TO GC-TO TO GC-NEW
+    962 0 DO I 1 VSLOT GC-MOVE LOOP
+    962 0 DO I 1 ASLOT @ ?DUP IF ARR-GC THEN LOOP
+    GC-NEW TO SH-BASE GC-TO TO SH-PTR
+;
+: SH-FITS? ( n -- flag ) SH-PTR + SH-BASE SHEAP-SIZE + <= ;
+: SH-ALLOC ( n -- addr )
+    DUP SH-FITS? 0= IF GC DUP SH-FITS? 0= IF E-MEM THROW THEN THEN
+    SH-PTR SWAP OVER + TO SH-PTR
+;
+0 VALUE SA-SLOT
+0 VALUE SA-SRC
+0 VALUE SA-LEN
+( Store a string into a variable slot: address, length )
+: STR-ASSIGN ( addr len slot -- )
+    TO SA-SLOT TO SA-LEN TO SA-SRC
+    SA-LEN 0= IF 0 SA-SLOT ! 0 SA-SLOT 8+ ! EXIT THEN
+    SA-SRC IN-SHEAP? IF SA-LEN TMP-ALLOC DUP SA-SRC SWAP SA-LEN CMOVE TO SA-SRC THEN
+    0 SA-SLOT 8+ !
+    SA-LEN SH-ALLOC DUP SA-SLOT !
+    SA-SRC SWAP SA-LEN CMOVE
+    SA-LEN SA-SLOT 8+ !
+;
+
+( ---- Arrays. Block: dims, element size, size of each dim, then the data. ---- )
+ARRHEAP VALUE AH-PTR
+: SLOT-ESIZE ( aslot -- n ) ARRTAB-A - 8 / 3 MOD 1 = IF 16 ELSE 8 THEN ;
+0 VALUE AC-SLOT
+0 VALUE AC-N
+0 VALUE AC-BLK
+0 VALUE AC-ES
+0 VALUE AC-PLUS                ( DIM gives the highest index: add 1 )
+( Make an array. d1..dn are the number of elements in each dimension. )
+: ARR-CREATE ( d1 .. dn n aslot -- )
+    TO AC-SLOT TO AC-N
+    AC-SLOT SLOT-ESIZE TO AC-ES
+    AH-PTR TO AC-BLK
+    AC-BLK AC-N 2 + CELLS + ARRHEAP ARRHEAP-SIZE + > IF E-MEM THROW THEN
+    AC-ES
+    AC-N 0 DO
+        SWAP AC-PLUS + DUP 1 < IF ILLQ THEN
+        DUP AC-BLK AC-N I - 1+ CELLS + ! *
+        DUP 33554432 > IF E-MEM THROW THEN
+    LOOP
+    AC-BLK AC-N 2 + CELLS +
+    2DUP + ARRHEAP ARRHEAP-SIZE + > IF E-MEM THROW THEN
+    2DUP SWAP 0 FILL
+    + TO AH-PTR
+    AC-N AC-BLK !  AC-ES AC-BLK 8+ !
+    AC-BLK AC-SLOT !
+;
+: ARR-AUTO ( n aslot -- ) >R DUP 0 DO 11 SWAP LOOP R> ARR-CREATE ;
+0 VALUE AE-BLK
+0 VALUE AE-OFF
+0 VALUE AE-MUL
+( Address of an array element. An array that is not DIMmed gets 0..10. )
+: ARR-ELEM ( s1 .. sn n aslot -- addr )
+    DUP @ 0= IF 2DUP ARR-AUTO THEN
+    @ TO AE-BLK
+    AE-BLK @ <> IF E-SUBS THROW THEN
+    0 TO AE-OFF 1 TO AE-MUL
+    AE-BLK @ 0 DO
+        AE-BLK AE-BLK @ I - 1+ CELLS + @
+        OVER 0< IF ILLQ THEN
+        2DUP >= IF E-SUBS THROW THEN
+        SWAP AE-MUL * AE-OFF + TO AE-OFF
+        AE-MUL * TO AE-MUL
+    LOOP
+    AE-BLK ARR-DATA AE-OFF AE-BLK 8+ @ * +
+;
+( Subscripts after the open bracket )
+: PARSE-SUBS ( -- s1 .. sn n )
+    0
+    BEGIN
+        >R EVAL-NUM F>INT R> 1+
+        PEEKC 44 =
+    WHILE
+        NEXTC
+    REPEAT
+    41 EXPECT
+;
+
+( ---- Special variables: TI, TI$, ST ---- )
+0 VALUE TI-OFFSET
+0 VALUE STATUS
+: RAW-JIFFIES ( -- n ) TICKS 3932160 * 1193182 / ;
+: JIFFIES ( -- n )
+    RAW-JIFFIES TI-OFFSET + 5184000 MOD DUP 0< IF 5184000 + THEN
+;
+8 ALLOT CONSTANT TIBUF
+: 2DIG ( n addr -- ) SWAP 10 /MOD ROT TUCK SWAP 48 + SWAP C! 1+ SWAP 48 + SWAP C! ;
+: TI-STRING ( -- addr len )
+    JIFFIES 60 / 60 /MOD 60 /MOD
+    TIBUF 2DIG TIBUF 2 + 2DIG TIBUF 4 + 2DIG
+    TIBUF 6
+;
+
+( A variable reference: address of the value and its type. SPECIAL is 1 for TI, )
+( 2 for TI$, 3 for ST and 0 for other variables. )
+0 VALUE SPECIAL
+: VARREF ( -- addr type )
+    0 TO SPECIAL
+    PARSE-NAME VTYPE
+    PEEKC 40 = IF
+        NEXTC >R >R PARSE-SUBS R> R>
+        DUP >R ASLOT ARR-ELEM R>
+    ELSE
+        OVER IDX-TI = IF
+            DUP 0= IF 1 TO SPECIAL THEN
+            DUP 1 = IF 2 TO SPECIAL THEN
+        THEN
+        OVER IDX-ST = OVER 0= AND IF 3 TO SPECIAL THEN
+        DUP >R VSLOT R>
+    THEN
+;
+: FETCH ( addr type -- val )
+    1 = IF DUP @ SWAP 8+ @ 1 TO ETYPE ELSE @ 0 TO ETYPE THEN
+;
+
+( ---- PEEK and POKE. Some addresses act as C64 hardware. ---- )
+VARIABLE RNDSEED
+88172645463325252 RNDSEED !
+: RND-NEXT ( -- f )
+    RNDSEED @
+    DUP 13 LSHIFT XOR DUP 7 RSHIFT XOR DUP 17 LSHIFT XOR
+    DUP RNDSEED !
+    12 RSHIFT 4607182418800017408 OR F1 F-
+;
+0 VALUE RASTER
+: B-PEEK ( addr -- byte )
+    DUP 160 163 WITHIN IF 160 - JIFFIES SWAP 2 SWAP - 8 * RSHIFT 255 AND EXIT THEN
+    DUP 211 = IF DROP CX EXIT THEN
+    DUP 214 = IF DROP CY EXIT THEN
+    DUP 199 = IF DROP RVS EXIT THEN
+    DUP 212 = IF DROP QUOTE EXIT THEN
+    DUP 197 = OVER 203 = OR IF DROP KBD-POLL 64 EXIT THEN
+    DUP 198 = IF KBD-POLL THEN
+    DUP 53266 = IF DROP RASTER 1+ 255 AND DUP TO RASTER EXIT THEN
+    DUP 54299 = IF DROP RND-NEXT 256 S>F F* FROUND>S 255 AND EXIT THEN
+    DUP 56320 = OVER 56321 = OR IF DROP 255 EXIT THEN
+    DUP 53248 57344 WITHIN 1 M@ 4 AND 0= AND IF 53248 - CHARROM + C@ EXIT THEN
+    M@
+;
+: B-POKE ( byte addr -- )
+    2DUP M!
+    DUP 211 = IF DROP 39 MIN TO CX EXIT THEN
+    DUP 214 = IF DROP 24 MIN TO CY EXIT THEN
+    DUP 199 = IF DROP 0<> TO RVS EXIT THEN
+    DUP 212 = IF DROP 0<> TO QUOTE EXIT THEN
+    DUP 53272 = OVER 56576 = OR IF 2DROP VIC-UPDATE EXIT THEN
+    DUP 53281 = IF 2DROP 1 TO DIRTY EXIT THEN
+    DUP 53280 = IF DROP GFX-ON IF SET-BORDER ELSE DROP THEN EXIT THEN
+    NIP
+    DUP VSCR DUP 1000 + WITHIN IF
+        VSCR - 40 /MOD GFX-ON IF CELL-DRAW ELSE 2DROP THEN EXIT
+    THEN
+    DUP 55296 56296 WITHIN IF
+        55296 - 40 /MOD GFX-ON IF CELL-DRAW ELSE 2DROP THEN EXIT
+    THEN
+    CBASE MEM - DUP 0 65536 WITHIN IF
+        2048 OVER + WITHIN IF 1 TO DIRTY THEN
+    ELSE
+        2DROP
+    THEN
+;
+
+( ---- Clear all variables ---- )
+: CLR-VARS ( -- )
+    VARTAB-A 2886 16 * 0 FILL
+    ARRTAB-A 2886 8 * 0 FILL
+    FNTAB-A 962 16 * 0 FILL
+    ARRHEAP TO AH-PTR
+    SHEAP-A TO SH-BASE SHEAP-A TO SH-PTR
+    TMP-RESET
+;
+: FREE-BYTES ( -- n )
+    40960 VARTAB@ - SH-PTR SH-BASE - - AH-PTR ARRHEAP - 2 / - 0 MAX
+    DUP 32767 > IF 65536 - THEN
+;
+
+( ---- Primary values ---- )
+F1 FATAN 4 S>F F* CONSTANT FPI
+: PRIM-NUM ( -- f )
+    TXTPTR TO PP TXTPTR 1000 + TO PE FIN PP TO TXTPTR 0 TO ETYPE
+;
+: PRIM-STR ( -- addr len )
+    NEXTC TXTPTR
+    BEGIN TXTPTR C@ DUP 0<> SWAP 34 <> AND WHILE NEXTC REPEAT
+    TXTPTR OVER -
+    TXTPTR C@ 34 = IF NEXTC THEN
+    1 TO ETYPE
+;
+: PRIM-VAR ( -- val )
+    VARREF
+    SPECIAL CASE
+        1 OF 2DROP JIFFIES S>F 0 TO ETYPE ENDOF
+        2 OF 2DROP TI-STRING 1 TO ETYPE ENDOF
+        3 OF 2DROP STATUS S>F 0 TO ETYPE ENDOF
+        >R FETCH R>
+    ENDCASE
+;
+( FN name[arg]: put arg in the parameter variable, then evaluate the DEF FN text )
+: PRIM-FN ( -- f )
+    PARSE-NAME VTYPE IF SYNERR THEN
+    16 * FNTAB-A +
+    DUP @ 0= IF E-UNDFN THROW THEN
+    >R
+    40 EXPECT EVAL-NUM 41 EXPECT
+    R> DUP @ SWAP 8+ @
+    DUP @ >R DUP >R
+    ROT SWAP !
+    TXTPTR >R TO TXTPTR
+    EVAL-NUM
+    R> TO TXTPTR R> R> SWAP !
+    0 TO ETYPE
+;
+
+( ---- Functions: SGN .. MID$ are tokens 180..202 ---- )
+23 CELLS ALLOT CONSTANT FUNTAB
+: ARG ( -- val ) 40 EXPECT EVAL 41 EXPECT ;
+: NARG ( -- f ) ARG TYPE-NUM ;
+: DROPVAL ( val -- ) ETYPE IF 2DROP ELSE DROP THEN ;
+: F-SGN NARG FSGN S>F ;
+: F-INT NARG FFLOOR ;
+: F-ABS NARG FABS ;
+: F-USR NARG DROP ILLQ ;
+: F-FRE ARG DROPVAL GC FREE-BYTES S>F 0 TO ETYPE ;
+: F-POS ARG DROPVAL CY CY LINE-START - 40 * CX + S>F 0 TO ETYPE ;
+: F-SQR NARG DUP F0< IF ILLQ THEN FSQRT ;
+: F-RND
+    NARG
+    DUP F0< IF
+        DUP 1 RSHIFT XOR 6364136223846793005 * DUP 0= IF 1+ THEN RNDSEED !
+    ELSE
+        F0= IF TICKS 2654435761 * 1+ RNDSEED @ XOR RNDSEED ! THEN
+    THEN
+    RND-NEXT
+;
+: F-LOG NARG DUP F0< OVER F0= OR IF ILLQ THEN FLN ;
+: F-EXP NARG FEXP FCHK ;
+: F-COS NARG FCOS ;
+: F-SIN NARG FSIN ;
+: F-TAN NARG FTAN FCHK ;
+: F-ATN NARG FATAN ;
+: F-PEEK NARG F>ADDR B-PEEK S>F ;
+: F-LEN ARG TYPE-STR NIP S>F 0 TO ETYPE ;
+: F-STR$ NARG FOUT TMP-COPY 1 TO ETYPE ;
+: F-VAL ARG TYPE-STR STR>F DROP 0 TO ETYPE ;
+: F-ASC ARG TYPE-STR 0= IF ILLQ THEN C@ S>F 0 TO ETYPE ;
+: F-CHR$ NARG F>BYTE 1 TMP-ALLOC TUCK C! 1 1 TO ETYPE ;
+: F-LEFT$ 40 EXPECT EVAL-STR 44 EXPECT EVAL-BYTE 41 EXPECT MIN 1 TO ETYPE ;
+: F-RIGHT$
+    40 EXPECT EVAL-STR 44 EXPECT EVAL-BYTE 41 EXPECT
+    OVER MIN TUCK - ROT + SWAP 1 TO ETYPE
+;
+: F-MID$
+    40 EXPECT EVAL-STR 44 EXPECT EVAL-BYTE DUP 0= IF ILLQ THEN
+    PEEKC 44 = IF NEXTC EVAL-BYTE ELSE 255 THEN
+    41 EXPECT
+    >R 1-
+    2DUP <= IF 2DROP 0 RDROP ELSE TUCK - R> MIN >R + R> THEN
+    1 TO ETYPE
+;
+: FUN! ( xt token -- ) 180 - CELLS FUNTAB + ! ;
+: INIT-FUNTAB ( -- )
+    ['] F-SGN 180 FUN!  ['] F-INT 181 FUN!  ['] F-ABS 182 FUN!  ['] F-USR 183 FUN!
+    ['] F-FRE 184 FUN!  ['] F-POS 185 FUN!  ['] F-SQR 186 FUN!  ['] F-RND 187 FUN!
+    ['] F-LOG 188 FUN!  ['] F-EXP 189 FUN!  ['] F-COS 190 FUN!  ['] F-SIN 191 FUN!
+    ['] F-TAN 192 FUN!  ['] F-ATN 193 FUN!  ['] F-PEEK 194 FUN! ['] F-LEN 195 FUN!
+    ['] F-STR$ 196 FUN! ['] F-VAL 197 FUN!  ['] F-ASC 198 FUN!  ['] F-CHR$ 199 FUN!
+    ['] F-LEFT$ 200 FUN! ['] F-RIGHT$ 201 FUN! ['] F-MID$ 202 FUN!
+;
+INIT-FUNTAB
+
+: PRIM ( -- val )
+    PEEKC
+    DUP DIGIT? OVER 46 = OR IF DROP PRIM-NUM EXIT THEN
+    DUP 34 = IF DROP PRIM-STR EXIT THEN
+    DUP LETTER? IF DROP PRIM-VAR EXIT THEN
+    DUP 40 = IF DROP NEXTC EVAL 41 EXPECT EXIT THEN
+    DUP 171 = IF DROP NEXTC 'EVPOW @ EXECUTE TYPE-NUM FNEGATE EXIT THEN
+    DUP 170 = IF DROP NEXTC RECURSE EXIT THEN
+    DUP 168 = IF DROP NEXTC 'EVREL @ EXECUTE TYPE-NUM F>I16 INVERT S>F EXIT THEN
+    DUP 255 = IF DROP NEXTC FPI 0 TO ETYPE EXIT THEN
+    DUP 165 = IF DROP NEXTC PRIM-FN EXIT THEN
+    DUP 180 203 WITHIN IF NEXTC 180 - CELLS FUNTAB + @ EXECUTE EXIT THEN
+    DROP SYNERR
+;
+
+( ---- Operators, from high to low priority: ^  * /  + -  = < >  AND  OR ---- )
+: FINT? ( f -- flag ) DUP FFLOOR F= ;
+: IPOW ( x n -- x^n )
+    F1 SWAP
+    BEGIN
+        DUP
+    WHILE
+        DUP 1 AND IF >R OVER F* R> THEN
+        1 RSHIFT >R SWAP DUP F* SWAP R>
+    REPEAT
+    DROP NIP
+;
+: FPOWER ( x y -- x^y )
+    DUP F0= IF 2DROP F1 EXIT THEN
+    OVER F0= IF NIP F0< IF E-DIV0 THROW THEN F0 EXIT THEN
+    DUP FINT? OVER FABS 1024 S>F F< AND IF
+        DUP F0< >R FABS FROUND>S IPOW R> IF F1 SWAP F/ THEN EXIT
+    THEN
+    OVER F0< IF ILLQ THEN
+    FPOW
+;
+: EV-POW ( -- val )
+    PRIM
+    BEGIN
+        PEEKC 174 =
+    WHILE
+        TYPE-NUM NEXTC PRIM TYPE-NUM FPOWER FCHK
+    REPEAT
+;
+: EV-MUL ( -- val )
+    EV-POW
+    BEGIN
+        PEEKC DUP 172 = SWAP 173 = OR
+    WHILE
+        TYPE-NUM GETC >R EV-POW TYPE-NUM R>
+        172 = IF F* ELSE DUP F0= IF E-DIV0 THROW THEN F/ THEN
+        FCHK
+    REPEAT
+;
+: EV-ADD ( -- val )
+    EV-MUL
+    BEGIN
+        PEEKC DUP 170 = SWAP 171 = OR
+    WHILE
+        GETC ETYPE >R >R EV-MUL R> R>
+        ETYPE <> IF E-TYPE THROW THEN
+        ETYPE IF
+            170 <> IF E-TYPE THROW THEN STR-CAT 1 TO ETYPE
+        ELSE
+            170 = IF F+ ELSE F- THEN FCHK
+        THEN
+    REPEAT
+;
+0 VALUE SCL1
+0 VALUE SCL2
+: STR-CMP ( a1 l1 a2 l2 -- n )
+    TO SCL2 SWAP TO SCL1
+    SCL1 SCL2 MIN ?DUP IF
+        0 DO
+            OVER I + C@ OVER I + C@
+            2DUP <> IF > IF 1 ELSE -1 THEN NIP NIP UNLOOP EXIT THEN
+            2DROP
+        LOOP
+    THEN
+    2DROP SCL1 SCL2 - DUP IF 0< IF -1 ELSE 1 THEN THEN
+;
+( Relational operators as bits: > 1, = 2, < 4 )
+: REL-OP ( -- mask )
+    0
+    BEGIN
+        PEEKC DUP 177 180 WITHIN
+    WHILE
+        177 - 1 SWAP LSHIFT OR NEXTC
+    REPEAT
+    DROP
+;
+: REL-TRUE? ( n mask -- flag )
+    SWAP DUP 0> IF DROP 1 AND ELSE 0= IF 2 AND ELSE 4 AND THEN THEN 0<>
+;
+: EV-REL ( -- val )
+    EV-ADD
+    BEGIN
+        REL-OP ?DUP
+    WHILE
+        ETYPE >R >R EV-ADD R> R>
+        ETYPE <> IF E-TYPE THROW THEN
+        >R ETYPE IF STR-CMP ELSE FCMP THEN R> REL-TRUE?
+        IF -1 ELSE 0 THEN S>F 0 TO ETYPE
+    REPEAT
+;
+: EV-AND ( -- val )
+    EV-REL
+    BEGIN
+        PEEKC 175 =
+    WHILE
+        TYPE-NUM NEXTC EV-REL TYPE-NUM F>I16 SWAP F>I16 AND S>F
+    REPEAT
+;
+: EV-OR ( -- val )
+    EV-AND
+    BEGIN
+        PEEKC 176 =
+    WHILE
+        TYPE-NUM NEXTC EV-AND TYPE-NUM F>I16 SWAP F>I16 OR S>F
+    REPEAT
+;
+: EVAL-MAIN ( -- val )
+    EDEPTH 1+ DUP TO EDEPTH 40 > IF E-COMPLEX THROW THEN
+    EV-OR
+    EDEPTH 1- TO EDEPTH
+;
+XT' EVAL-MAIN 'EVAL !
+XT' EV-POW 'EVPOW !
+XT' EV-REL 'EVREL !
+
+INCLUDE bio.f

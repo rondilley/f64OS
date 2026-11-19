@@ -1,0 +1,543 @@
+( f64 BASIC V2 - bstmt.f: statements and the run loop )
+DECIMAL
+
+XT' BOUT 'LOUT !                 ( LIST output goes to the CMD channel too )
+VARIABLE 'EXEC-STMT
+65535 VALUE CURLINE              ( 65535: direct mode )
+: DIRECT? ( -- flag ) TXTPTR MEM - 0 65536 WITHIN 0= ;
+
+( ---- Stack for FOR and GOSUB. Entry: kind var limit step txtptr line ---- )
+48 CONSTANT CS-ESIZE
+256 CONSTANT CS-MAX
+CS-MAX CS-ESIZE * ALLOT CONSTANT CSTACK
+0 VALUE CSP
+: CS-TOP ( -- e ) CSP 1- CS-ESIZE * CSTACK + ;
+: CS-PUSH ( -- e ) CSP CS-MAX >= IF E-MEM THROW THEN CSP 1+ TO CSP CS-TOP ;
+: CS-POP ( -- ) CSP 1- TO CSP ;
+
+( ---- DATA pointer ---- )
+0 VALUE DATPTR
+0 VALUE DATLIN
+0 VALUE DAT-ITEM
+: RESTORE-DATA ( -- ) MEM 2048 + TO DATPTR 0 TO DATLIN 0 TO DAT-ITEM ;
+( From addr, find the end of the statement: a colon or the 0, not in quotes )
+: EOS-SCAN ( addr -- addr )
+    0 SWAP
+    BEGIN
+        DUP C@ DUP
+    WHILE
+        DUP 34 = IF DROP SWAP 0= SWAP ELSE 58 = 2 PICK 0= AND IF NIP EXIT THEN THEN
+        1+
+    REPEAT
+    DROP NIP
+;
+( DATPTR is at the end of a statement. Find the next DATA statement. )
+: DATA-FIND ( -- )
+    BEGIN
+        DATPTR C@ 0= IF
+            DATPTR 1+ DUP W@ 0= IF DROP E-DATA THROW THEN
+            DUP 2 + W@ TO DATLIN 4 + TO DATPTR
+        ELSE
+            DATPTR 1+ TO DATPTR
+        THEN
+        BEGIN DATPTR C@ 32 = WHILE DATPTR 1+ TO DATPTR REPEAT
+        DATPTR C@ 131 = IF DATPTR 1+ TO DATPTR EXIT THEN
+        DATPTR EOS-SCAN TO DATPTR
+    AGAIN
+;
+: DATA-NEXT ( -- )
+    DAT-ITEM IF 0 TO DAT-ITEM EXIT THEN
+    DATPTR C@ 44 = IF DATPTR 1+ TO DATPTR EXIT THEN
+    DATA-FIND
+;
+: DATA-ITEM ( -- addr len )
+    BEGIN DATPTR C@ 32 = WHILE DATPTR 1+ TO DATPTR REPEAT
+    DATPTR C@ 34 = IF
+        DATPTR 1+ DUP
+        BEGIN DUP C@ DUP 0<> SWAP 34 <> AND WHILE 1+ REPEAT
+        DUP C@ 34 = IF DUP 1+ ELSE DUP THEN TO DATPTR
+        OVER -
+        BEGIN DATPTR C@ 32 = WHILE DATPTR 1+ TO DATPTR REPEAT
+    ELSE
+        DATPTR DUP
+        BEGIN DUP C@ DUP 0<> OVER 44 <> AND SWAP 58 <> AND WHILE 1+ REPEAT
+        DUP TO DATPTR OVER -
+        BEGIN DUP 0> IF 2DUP + 1- C@ 32 = ELSE 0 THEN WHILE 1- REPEAT
+    THEN
+;
+
+( ---- Variable assignment ---- )
+: STORE-VAR ( val addr type -- )
+    DUP 1 = IF DROP TYPE-STR STR-ASSIGN EXIT THEN
+    TYPE-NUM
+    2 = IF SWAP F>I16 S>F SWAP THEN !
+;
+( Store a number into a numeric variable )
+: STORE-NUM ( f addr type -- ) 2 = IF SWAP F>I16 S>F SWAP THEN ! ;
+: SET-TI$ ( addr len -- )
+    6 <> IF ILLQ THEN
+    0 SWAP
+    6 0 DO DUP I + C@ DUP DIGIT? 0= IF ILLQ THEN 48 - ROT 10 * + SWAP LOOP
+    DROP
+    100 /MOD 100 /MOD 3600 * SWAP 60 * + + 60 *
+    RAW-JIFFIES - TO TI-OFFSET
+;
+: B-LET ( -- )
+    VARREF SPECIAL >R >R >R
+    178 EXPECT EVAL
+    R> R> R>
+    CASE
+        0 OF STORE-VAR ENDOF
+        2 OF 2DROP TYPE-STR SET-TI$ ENDOF
+        SYNERR
+    ENDCASE
+;
+
+( ---- Program flow ---- )
+0 VALUE CONT-TXT
+0 VALUE CONT-LINE
+: GOTO-LINE ( n -- ) FIND-LINE 0= IF E-UNDEF THROW THEN MEM + 1- TO TXTPTR ;
+: B-GOTO ( -- ) LINGET GOTO-LINE ;
+: GOSUB-TO ( n -- )
+    FIND-LINE 0= IF E-UNDEF THROW THEN
+    CS-PUSH >R 2 R@ ! TXTPTR R@ 32 + ! CURLINE R> 40 + !
+    MEM + 1- TO TXTPTR
+;
+: B-GOSUB ( -- ) LINGET GOSUB-TO ;
+: B-RETURN ( -- )
+    BEGIN
+        CSP 0= IF E-RETURN THROW THEN
+        CS-TOP @ 2 <>
+    WHILE
+        CS-POP
+    REPEAT
+    CS-TOP DUP 32 + @ TO TXTPTR 40 + @ TO CURLINE CS-POP
+    SKIP-STMT
+;
+: B-END ( -- ) E-END THROW ;
+: B-STOP ( -- ) E-BREAK THROW ;
+: B-REM ( -- ) SKIP-LINE ;
+: B-DATA ( -- ) SKIP-STMT ;
+: B-IF ( -- )
+    EVAL ETYPE IF NIP 0<> ELSE F0= 0= THEN
+    PEEKC 137 = IF
+        NEXTC IF LINGET GOTO-LINE ELSE SKIP-LINE THEN EXIT
+    THEN
+    167 EXPECT
+    IF
+        PEEKC DIGIT? IF LINGET GOTO-LINE ELSE 'EXEC-STMT @ EXECUTE THEN
+    ELSE
+        SKIP-LINE
+    THEN
+;
+: B-ON ( -- )
+    EVAL-BYTE
+    GETC DUP 137 <> OVER 141 <> AND IF SYNERR THEN
+    SWAP
+    BEGIN
+        DUP 1 = IF DROP LINGET SWAP 141 = IF GOSUB-TO ELSE GOTO-LINE THEN EXIT THEN
+        1- LINGET DROP
+        PEEKC 44 =
+    WHILE
+        NEXTC
+    REPEAT
+    2DROP
+;
+( ---- FOR and NEXT ---- )
+: B-FOR ( -- )
+    VARREF
+    0<> SPECIAL OR IF SYNERR THEN
+    DUP VARTAB-A DUP 46176 + WITHIN 0= IF SYNERR THEN
+    178 EXPECT EVAL-NUM OVER !
+    164 EXPECT EVAL-NUM
+    PEEKC 169 = IF NEXTC EVAL-NUM ELSE F1 THEN
+    ( remove an old FOR of this variable and all entries above it )
+    CSP BEGIN
+        DUP 0>
+    WHILE
+        1- DUP CS-ESIZE * CSTACK + DUP @ 1 = SWAP 8+ @ 5 PICK = AND IF DUP TO CSP THEN
+    REPEAT
+    DROP
+    CS-PUSH >R
+    1 R@ !
+    R@ 24 + ! R@ 16 + ! R@ 8+ !
+    TXTPTR R@ 32 + ! CURLINE R> 40 + !
+;
+( Find the FOR entry of var, or the top FOR entry if var is 0 )
+: FOR-FIND ( var -- )
+    BEGIN
+        CSP 0= IF E-NEXT THROW THEN
+        CS-TOP @ 1 <> IF E-NEXT THROW THEN
+        DUP 0= IF DROP EXIT THEN
+        CS-TOP 8+ @ OVER = IF DROP EXIT THEN
+        CS-POP
+    AGAIN
+;
+: B-NEXT ( -- )
+    BEGIN
+        EOS? IF 0 ELSE VARREF DROP THEN
+        FOR-FIND
+        CS-TOP DUP 8+ @ DUP @ 2 PICK 24 + @ F+ FCHK TUCK SWAP !
+        OVER 16 + @ FCMP OVER 24 + @ FSGN = IF
+            DROP CS-POP
+        ELSE
+            DUP 32 + @ TO TXTPTR 40 + @ TO CURLINE EXIT
+        THEN
+        PEEKC 44 =
+    WHILE
+        NEXTC
+    REPEAT
+;
+
+( ---- DIM, DEF, READ, RESTORE ---- )
+: B-DIM ( -- )
+    BEGIN
+        PARSE-NAME VTYPE
+        40 EXPECT >R >R PARSE-SUBS R> R> ASLOT
+        DUP @ IF E-REDIM THROW THEN
+        1 TO AC-PLUS ARR-CREATE 0 TO AC-PLUS
+        PEEKC 44 =
+    WHILE
+        NEXTC
+    REPEAT
+;
+: B-DEF ( -- )
+    DIRECT? IF E-DIRECT THROW THEN
+    165 EXPECT PARSE-NAME VTYPE IF SYNERR THEN 16 * FNTAB-A +
+    40 EXPECT PARSE-NAME VTYPE IF SYNERR THEN 0 VSLOT 41 EXPECT 178 EXPECT
+    OVER 8+ ! TXTPTR SWAP !
+    SKIP-STMT
+;
+: B-READ ( -- )
+    BEGIN
+        VARREF SPECIAL IF SYNERR THEN
+        DATA-NEXT DATA-ITEM
+        2 PICK 1 = IF
+            ROT DROP ROT STR-ASSIGN
+        ELSE
+            DUP >R STR>F R> <> IF DATLIN TO CURLINE SYNERR THEN
+            -ROT STORE-NUM
+        THEN
+        PEEKC 44 =
+    WHILE
+        NEXTC
+    REPEAT
+;
+: B-RESTORE ( -- ) RESTORE-DATA ;
+
+( ---- Memory and machine ---- )
+: B-POKE ( -- ) EVAL-ADDR 44 EXPECT EVAL-BYTE SWAP B-POKE ;
+: B-WAIT ( -- )
+    EVAL-ADDR 44 EXPECT EVAL-BYTE
+    PEEKC 44 = IF NEXTC EVAL-BYTE ELSE 0 THEN
+    BEGIN
+        2 PICK B-PEEK OVER XOR 2 PICK AND 0=
+    WHILE
+        KBD-POLL STOPFLAG IF 0 TO STOPFLAG E-BREAK THROW THEN
+        DIRTY IF REDRAW THEN
+        HALT
+    REPEAT
+    DROP 2DROP
+;
+98 CONSTANT E-RESET
+: B-SYS ( -- )
+    EVAL-ADDR
+    CASE
+        64738 OF E-RESET THROW ENDOF
+        58692 OF CLEAR-SCREEN ENDOF
+        65490 OF 780 M@ CHROUT ENDOF
+        58726 OF 0 TO CX 0 TO CY ENDOF
+    ENDCASE
+;
+
+( ---- CLR, NEW, RUN, CONT, LIST ---- )
+: CLEAR-ALL ( -- ) CLR-VARS 0 TO CSP RESTORE-DATA CH-INIT ;
+: B-CLR ( -- ) CLEAR-ALL ;
+: B-NEW ( -- )
+    NEW-PROG CLEAR-ALL 0 TO CONT-TXT
+    DIRECT? 0= IF E-END THROW THEN
+;
+: B-RUN ( -- )
+    CLEAR-ALL
+    EOS? IF MEM 2048 + TO TXTPTR 0 TO CURLINE ELSE LINGET GOTO-LINE THEN
+;
+: B-CONT ( -- )
+    CONT-TXT 0= IF E-CONT THROW THEN
+    CONT-TXT TO TXTPTR CONT-LINE TO CURLINE
+;
+: B-LIST ( -- )
+    0 63999
+    PEEKC DIGIT? IF 2DROP LINGET DUP THEN
+    PEEKC 171 = IF NEXTC DROP PEEKC DIGIT? IF LINGET ELSE 63999 THEN THEN
+    SWAP FIND-LINE DROP
+    BEGIN
+        DUP MW@ IF DUP 2 + MW@ 2 PICK <= ELSE 0 THEN
+    WHILE
+        DUP LIST-LINE
+        KBD-POLL STOPFLAG IF 0 TO STOPFLAG E-BREAK THROW THEN
+        MW@
+    REPEAT
+    2DROP
+    DIRECT? 0= IF E-END THROW THEN
+;
+
+( ---- PRINT ---- )
+0 VALUE P-NOCR
+: P-SPACES ( n -- ) 0 MAX ?DUP IF 0 DO OUT-RIGHT LOOP THEN ;
+: B-PRINT ( -- )
+    0 TO P-NOCR
+    BEGIN
+        EOS? 0=
+    WHILE
+        PEEKC CASE
+            59  OF NEXTC 1 TO P-NOCR ENDOF
+            44  OF NEXTC 10 OUT-COL 10 MOD - P-SPACES 1 TO P-NOCR ENDOF
+            163 OF NEXTC EVAL-BYTE 41 EXPECT OUT-COL - P-SPACES 1 TO P-NOCR ENDOF
+            166 OF NEXTC EVAL-BYTE 41 EXPECT P-SPACES 1 TO P-NOCR ENDOF
+            EVAL ETYPE IF BTYPE ELSE FOUT BTYPE OUT-RIGHT THEN 0 TO P-NOCR
+        ENDCASE
+    REPEAT
+    P-NOCR 0= IF 13 BOUT THEN
+;
+: CHAN-ARG ( -- ch ) EVAL-BYTE FIND-CH ?DUP 0= IF E-FNOPEN THROW THEN ;
+: B-PRINT# ( -- )
+    CHAN-ARG OUTCH >R TO OUTCH
+    PEEKC 44 = IF NEXTC THEN
+    B-PRINT
+    R> TO OUTCH
+;
+: B-CMD ( -- )
+    CHAN-ARG TO OUTCH
+    PEEKC 44 = IF NEXTC B-PRINT THEN
+;
+
+( ---- INPUT, INPUT#, GET, GET# ---- )
+0 VALUE IP-A    0 VALUE IP-L    0 VALUE IP-POS
+0 VALUE IP-CH   0 VALUE IP-COMMA 0 VALUE IP-NEED
+0 VALUE IP-START 0 VALUE IP-PA  0 VALUE IP-PL
+97 CONSTANT E-REDO
+: IP-SET ( addr len -- ) TO IP-L TO IP-A 0 TO IP-POS ;
+: IP-C ( -- c ) IP-POS IP-L < IF IP-A IP-POS + C@ ELSE -1 THEN ;
+: IP+ ( -- ) IP-POS 1+ TO IP-POS ;
+: IP-FIELD ( -- addr len )
+    BEGIN IP-C 32 = WHILE IP+ REPEAT
+    IP-C 34 = IF
+        IP+ IP-A IP-POS +
+        BEGIN IP-C DUP 34 <> SWAP -1 <> AND WHILE IP+ REPEAT
+        IP-A IP-POS + OVER -
+        IP-C 34 = IF IP+ THEN
+        BEGIN IP-C 32 = WHILE IP+ REPEAT
+    ELSE
+        IP-A IP-POS +
+        BEGIN IP-C DUP 44 <> OVER 58 <> AND SWAP -1 <> AND WHILE IP+ REPEAT
+        IP-A IP-POS + OVER -
+        BEGIN DUP 0> IF 2DUP + 1- C@ 32 = ELSE 0 THEN WHILE 1- REPEAT
+    THEN
+    IP-C 44 = IF IP+ 1 ELSE 0 THEN TO IP-COMMA
+;
+( Read a line from the keyboard after a prompt )
+: IP-KBD ( paddr plen -- )
+    PTYPE 1 TO IN-MODE READ-LINE 0 TO IN-MODE IP-SET
+;
+( Read a record from the channel IP-CH, up to RETURN or the end of the data )
+: IP-CHAN ( -- )
+    0 TO IBUF-LEN
+    BEGIN
+        IP-CH CH-GET DUP 0< OVER 13 = OR 0=
+    WHILE
+        IBUF-LEN 88 < IF IBUF IBUF-LEN + C! IBUF-LEN 1+ TO IBUF-LEN ELSE DROP THEN
+    REPEAT
+    DROP
+    IBUF IBUF-LEN IP-SET
+;
+: INPUT-VARS ( -- )
+    BEGIN
+        VARREF SPECIAL IF SYNERR THEN
+        IP-NEED IF IP-CH IF IP-CHAN ELSE S" ?? " IP-KBD THEN THEN
+        IP-FIELD IP-COMMA 0= TO IP-NEED
+        2 PICK 1 = IF
+            ROT DROP ROT STR-ASSIGN
+        ELSE
+            DUP >R STR>F R> <> IF E-REDO THROW THEN
+            -ROT STORE-NUM
+        THEN
+        PEEKC 44 =
+    WHILE
+        NEXTC
+    REPEAT
+    IP-COMMA IP-POS IP-L < OR IP-CH 0= AND IF S" ?EXTRA IGNORED" PTYPE 13 CHROUT THEN
+;
+: INPUT-ONCE ( -- )
+    IP-START TO TXTPTR
+    IP-PA IP-PL PTYPE S" ? " IP-KBD
+    IP-L 0= IF SKIP-STMT EXIT THEN
+    0 TO IP-NEED INPUT-VARS
+;
+: B-INPUT ( -- )
+    PEEKC 35 = IF
+        NEXTC CHAN-ARG TO IP-CH 44 EXPECT 0 TO STATUS
+        IP-CH >DEV @ DUP 0= SWAP 3 = OR IF 0 TO IP-CH S" " IP-KBD ELSE IP-CHAN THEN
+        0 TO IP-NEED
+        ['] INPUT-VARS CATCH ?DUP IF DUP E-REDO = IF DROP E-FDATA THEN THROW THEN
+        EXIT
+    THEN
+    DIRECT? IF E-DIRECT THROW THEN
+    0 TO IP-CH 0 TO IP-PL
+    PEEKC 34 = IF PRIM-STR TO IP-PL TO IP-PA 59 EXPECT THEN
+    TXTPTR TO IP-START
+    BEGIN
+        ['] INPUT-ONCE CATCH DUP E-REDO =
+    WHILE
+        DROP S" ?REDO FROM START" PTYPE 13 CHROUT
+    REPEAT
+    ?DUP IF THROW THEN
+;
+( The tokenizer makes INPUT# one token. Statement 132 is INPUT#. )
+: B-INPUT# ( -- )
+    CHAN-ARG TO IP-CH 44 EXPECT 0 TO STATUS
+    IP-CH >DEV @ DUP 0= SWAP 3 = OR IF 0 TO IP-CH S" " IP-KBD ELSE IP-CHAN THEN
+    0 TO IP-NEED
+    ['] INPUT-VARS CATCH ?DUP IF DUP E-REDO = IF DROP E-FDATA THEN THROW THEN
+;
+1 ALLOT CONSTANT GETBUF
+ALIGN
+( c is 0 if there is no key )
+: GET-ASSIGN ( c addr type -- )
+    DUP 1 = IF
+        DROP SWAP ?DUP IF GETBUF C! GETBUF 1 ELSE GETBUF 0 THEN ROT STR-ASSIGN EXIT
+    THEN
+    ROT DUP 0= IF DROP F0 ELSE DUP DIGIT? 0= IF SYNERR THEN 48 - S>F THEN
+    -ROT STORE-NUM
+;
+: B-GET ( -- )
+    PEEKC 35 = IF
+        NEXTC CHAN-ARG 44 EXPECT 0 TO STATUS
+        BEGIN
+            VARREF SPECIAL IF SYNERR THEN
+            2 PICK CH-GET DUP 0< IF DROP 0 THEN -ROT GET-ASSIGN
+            PEEKC 44 =
+        WHILE
+            NEXTC
+        REPEAT
+        DROP EXIT
+    THEN
+    DIRECT? IF E-DIRECT THROW THEN
+    BEGIN
+        VARREF SPECIAL IF SYNERR THEN
+        GETKEY -ROT GET-ASSIGN
+        PEEKC 44 =
+    WHILE
+        NEXTC
+    REPEAT
+;
+
+( ---- OPEN, CLOSE, LOAD, SAVE, VERIFY ---- )
+0 VALUE BO-DEV  0 VALUE BO-SA  0 VALUE BO-NA  0 VALUE BO-NL
+: B-OPEN ( -- )
+    EVAL-BYTE 1 TO BO-DEV 0 TO BO-SA 0 TO BO-NL
+    PEEKC 44 = IF
+        NEXTC EVAL-BYTE TO BO-DEV
+        PEEKC 44 = IF
+            NEXTC EVAL-BYTE TO BO-SA
+            PEEKC 44 = IF NEXTC EVAL-STR TO BO-NL TO BO-NA THEN
+        THEN
+    THEN
+    BO-DEV BO-SA BO-NA BO-NL CH-OPEN
+;
+: B-CLOSE ( -- ) EVAL-BYTE FIND-CH ?DUP IF CH-CLOSE THEN ;
+0 VALUE LS-DEV
+0 VALUE LS-SA
+: LS-ARGS ( -- )
+    EOS? IF E-NONAME THROW THEN
+    EVAL-STR FN-PARSE FN-LEN 0= IF E-NONAME THROW THEN
+    8 TO LS-DEV 0 TO LS-SA
+    PEEKC 44 = IF
+        NEXTC EVAL-BYTE TO LS-DEV
+        PEEKC 44 = IF NEXTC EVAL-BYTE TO LS-SA THEN
+    THEN
+    LS-DEV DISK-DEV? 0= IF E-ILLDEV THROW THEN
+;
+: FN-TYPE ( -- ) FN-LEN 0 DO FNBUF I + C@ ASC>PET CHROUT LOOP ;
+: B-LOAD ( -- )
+    LS-ARGS
+    DIRECT? IF
+        S" SEARCHING FOR " PTYPE FN-TYPE 13 CHROUT S" LOADING" PTYPE 13 CHROUT
+    THEN
+    LS-SA DO-LOAD
+    0 TO CONT-TXT
+    DIRECT? IF
+        CLEAR-ALL
+    ELSE
+        MEM 2048 + TO TXTPTR 0 TO CURLINE 0 TO CSP RESTORE-DATA
+    THEN
+;
+: B-SAVE ( -- )
+    LS-ARGS
+    DIRECT? IF S" SAVING " PTYPE FN-TYPE 13 CHROUT THEN
+    DO-SAVE
+;
+: B-VERIFY ( -- )
+    LS-ARGS
+    DIRECT? IF
+        S" SEARCHING FOR " PTYPE FN-TYPE 13 CHROUT S" VERIFYING" PTYPE 13 CHROUT
+    THEN
+    DO-VERIFY
+    DIRECT? IF S" OK" PTYPE 13 CHROUT THEN
+;
+
+( ---- Statement table and the run loop ---- )
+35 CELLS ALLOT CONSTANT STMTAB
+: STMT! ( xt token -- ) 128 - CELLS STMTAB + ! ;
+: INIT-STMTAB ( -- )
+    ['] B-END 128 STMT!     ['] B-FOR 129 STMT!     ['] B-NEXT 130 STMT!
+    ['] B-DATA 131 STMT!    ['] B-INPUT# 132 STMT!  ['] B-INPUT 133 STMT!
+    ['] B-DIM 134 STMT!     ['] B-READ 135 STMT!    ['] B-LET 136 STMT!
+    ['] B-GOTO 137 STMT!    ['] B-RUN 138 STMT!     ['] B-IF 139 STMT!
+    ['] B-RESTORE 140 STMT! ['] B-GOSUB 141 STMT!   ['] B-RETURN 142 STMT!
+    ['] B-REM 143 STMT!     ['] B-STOP 144 STMT!    ['] B-ON 145 STMT!
+    ['] B-WAIT 146 STMT!    ['] B-LOAD 147 STMT!    ['] B-SAVE 148 STMT!
+    ['] B-VERIFY 149 STMT!  ['] B-DEF 150 STMT!     ['] B-POKE 151 STMT!
+    ['] B-PRINT# 152 STMT!  ['] B-PRINT 153 STMT!   ['] B-CONT 154 STMT!
+    ['] B-LIST 155 STMT!    ['] B-CLR 156 STMT!     ['] B-CMD 157 STMT!
+    ['] B-SYS 158 STMT!     ['] B-OPEN 159 STMT!    ['] B-CLOSE 160 STMT!
+    ['] B-GET 161 STMT!     ['] B-NEW 162 STMT!
+;
+INIT-STMTAB
+: EXEC-STMT ( -- )
+    PEEKC
+    DUP 0= OVER 58 = OR IF DROP EXIT THEN
+    DUP 128 163 WITHIN IF NEXTC 128 - CELLS STMTAB + @ EXECUTE EXIT THEN
+    DUP LETTER? IF DROP B-LET EXIT THEN
+    DUP 203 = IF DROP NEXTC 164 EXPECT B-GOTO EXIT THEN
+    DROP SYNERR
+;
+XT' EXEC-STMT 'EXEC-STMT !
+0 VALUE LAST-REDRAW
+0 VALUE STMT-COUNT
+: RUN-CHECKS ( -- )
+    KBD-POLL
+    STOPFLAG IF 0 TO STOPFLAG E-BREAK THROW THEN
+    DIRTY IF TICKS LAST-REDRAW <> IF REDRAW TICKS TO LAST-REDRAW THEN THEN
+;
+( Run statements until the end of the direct line or of the program )
+: RUN-LOOP ( -- )
+    BEGIN
+        STMT-COUNT 1+ DUP TO STMT-COUNT 255 AND 0= IF RUN-CHECKS THEN
+        TMP-RESET 0 TO EDEPTH
+        PEEKC
+        DUP 58 = IF
+            DROP NEXTC EXEC-STMT
+        ELSE
+            0= IF
+                DIRECT? IF EXIT THEN
+                TXTPTR 1+ DUP W@ 0= IF DROP EXIT THEN
+                DUP 2 + W@ TO CURLINE 4 + TO TXTPTR
+                EXEC-STMT
+            ELSE
+                SYNERR
+            THEN
+        THEN
+    AGAIN
+;
+
+INCLUDE bmain.f

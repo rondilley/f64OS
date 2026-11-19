@@ -20,3 +20,4 @@ A 64-bit, bootable, preemptively multitasking kernel that loads and runs my 64-b
 * You can edit the editor (edit.f) inside itself and redeploy immediately to see your changes.
 * Runs DOOM as a native 64-bit binary, loaded from the filesystem by Forth. See [doom/README.md](doom/README.md).
 * Includes a Forth-based 64-bit x86-64 assembler (`asm.f`), loadable via `INCLUDE`, capable of assembling inline native words or standalone flat binaries executed via `CALL-NATIVE`.
+* Includes f64 BASIC V2, a Commodore 64 BASIC V2 interpreter written in Forth, with a C64 screen in VGA mode 13h. It runs the Thatcher program (`thatcher_c64.txt`). See [BASIC.md](BASIC.md).
