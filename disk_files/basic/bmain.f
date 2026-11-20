@@ -102,6 +102,8 @@ DECIMAL
     ." Back in Forth. Type BASIC to go back to BASIC." CR
 ;
 ( Remove all BASIC words from the dictionary )
-: BASIC-UNLOAD ( -- ) GFX-EXIT B-ORIG-LATEST LATEST ! B-ORIG-HERE HERE ! ;
+: BASIC-UNLOAD ( -- ) GFX-EXIT B-ORIG-LATEST LATEST ! B-ORIG-HERE HERE !
+    ." f64 BASIC V2 is unloaded (" UNUSED . ." cells free)" CR
+;
 
 ." f64 BASIC V2 is loaded. Type BASIC to start it." CR
