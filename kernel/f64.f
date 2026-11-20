@@ -1661,6 +1661,40 @@ DECIMAL
     SAVE-DIR
 ;
 
+0 VALUE CHK-LBA
+
+: DIR-EMPTY? (lba -- flag)
+    TO CHK-LBA
+    0
+    4 0 DO
+        CHK-LBA I + SEC-BUF SECTOR@
+        16 0 DO
+            SEC-BUF I 32 * + C@ 0<> IF
+                1+
+            THEN
+        LOOP
+    LOOP
+    1 <=
+;
+
+: RMDIR ( "dirname" -- )
+    WORD FIND-ENTRY
+    ?DUP 0= IF
+        ." Directory not found" CR EXIT
+    THEN
+    DUP DE-DIR? NOT IF
+        DROP ." Not a directory" CR EXIT
+    THEN
+    DUP 1+ C@ 46 = IF ( second char is '.' -> '..' )
+        DROP ." Cannot remove .." CR EXIT
+    THEN
+    DUP DE-LBA DIR-EMPTY? NOT IF
+        DROP ." Directory not empty" CR EXIT
+    THEN
+    32 ZERO-MEM
+    SAVE-DIR
+;
+
 0 VALUE SAVED-CWD
 0 VALUE HIGH-LBA-SEC
 
