@@ -60,7 +60,10 @@ Kernel:
     fninit
 
     call PMA_init
-    mov qword [abs stack_allocation], 0x7C00
+    ; Task stacks: 0x6000-0x6FFF (Forth) and 0x5000-0x5FFF (status bar).
+    ; They must not share a 4 KiB page with code: QEMU (TCG) runs code very
+    ; slowly when often-written data is in a code page (stage 1 is at 0x7C00).
+    mov qword [abs stack_allocation], 0x7000
     ; Clear the screen.
     mov rax, 0x0f200f200f200f20 ; Set background color to black (0), foreground
                                 ; color to white (15/f) and the character to blank space (20).

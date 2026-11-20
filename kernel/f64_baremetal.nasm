@@ -14,7 +14,8 @@ CPU X64 ; Target the x86_64 family of CPUs.
 F64_DATA_START equ 0x200000
 F64_DATA_END   equ 0x400000
 
-cur_dsp dq 0
+; cur_dsp (the data stack pointer for the status bar) is in its own page,
+; next to the return stack. See the note at return_stack.
 
 ; The NEXT Word as a macro
 %macro NEXT 0
@@ -1753,6 +1754,12 @@ set_up_data_segment:
     ret
 
 ; buffer allocation
+; NEXT writes cur_dsp for each Forth word. QEMU (TCG) runs code very slowly
+; if often-written data is in the same 4 KiB page as code, so cur_dsp and the
+; stacks start on a new page. (The image starts at 0x7C00, so ALIGN 4096 cannot
+; be used: it would move the start of the image.)
+times (-($ - $$ + 0x7C00)) & 4095 db 0
+cur_dsp dq 0
 align 8, db 0
 return_stack:
     times RETURN_STACK_SIZE db 0
